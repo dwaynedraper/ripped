@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx husky *)",
+      "Bash(npm run *)",
+      "Bash(npm audit *)",
+      "Bash(npm show *)"
+    ]
+  }
+}

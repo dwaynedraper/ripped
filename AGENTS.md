@@ -39,11 +39,19 @@ Companion platform for the YouTube series **"Ripped or Stamped"** — viewers si
 - `docs/decision-log.md` — why we chose what we chose.
 - `docs/testing-strategy.md` — what to test, when, and how.
 - `docs/glossary.md` — canonical terms used in this project.
+- `docs/build-plan.md` — the master execution plan. Read before implementing any phase.
 
 ## Collaboration norms
 
 - **Docs first, code second.** New features start with a spec in `/docs`, reviewed and merged, *then* implemented.
-- **TDD for critical paths:** auth, permissions, voting, rank math, payments. Write the failing test first.
+- **TDD for critical paths:** auth, permissions, voting, rank math, payments. Write the failing test first. See `docs/build-plan.md` §1.9 for the **mandatory test registry** — ~32 tests that must exist, each guarding a catastrophic failure mode. Do not skip them. Do not defer them. Write them in the phase where the feature is built.
 - **Typed env vars at boot.** Never `process.env.X` scattered through the code. Import from the central, Zod-validated `env` module.
 - **Varied typography in user-facing prose.** Bullets, bold, italic floating callouts. No wall-of-text.
 - **"Start right, not fast."** The aesthetic bar is "a senior dev should be jealous of the cleanliness."
+
+## Test philosophy (non-negotiable)
+
+- ~32 selective tests, not 1,000. Every test guards a real catastrophe (auth bypass, data corruption, vote fraud).
+- **Negative cases matter more than positive ones.** "Admin can do X" is good; "content_creator **cannot** do X" prevents breaches.
+- Tests marked 🔴 in the build plan are **TDD: write the failing test first,** then implement.
+- If a test file from §1.9 doesn't exist yet, create it before writing the code it tests.

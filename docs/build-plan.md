@@ -111,6 +111,169 @@ User-facing prose (UI copy, emails, docs) follows the project's **varied typogra
 
 This plan covers known decisions. When a situation arises that the plan does not cover (a subtle UI question, an edge case in voting, a payment flow detail), **ask the user**. Do not guess. The user is available and prefers one question now to five bugs later.
 
+### 1.9 The mandatory test registry
+
+This is the **exhaustive list of tests the project must have before v1 ships.** Not a thousand tests — roughly 30. Every one guards a failure mode that would be catastrophic (auth bypass, data corruption, vote manipulation, point fraud).
+
+The executing model must write these tests **in the phase where the feature is built,** test-first where marked with 🔴 (TDD: red → green). Tests marked ✅ already exist.
+
+#### Auth & permissions (~10 tests) — Phase 3
+
+**File:** `src/__tests__/lib/auth.test.ts`
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { isProfileComplete } from "@/lib/auth";
+
+const base = {
+  displayName: "TestUser",
+  countryCode: "US",
+  cityId: 1,
+  timezone: "America/New_York",
+} as any;
+
+describe("isProfileComplete", () => {
+  it("returns true when all four fields are set", () => {
+    expect(isProfileComplete(base)).toBe(true);
+  });
+  it("returns false when displayName is null", () => {
+    expect(isProfileComplete({ ...base, displayName: null })).toBe(false);
+  });
+  it("returns false when countryCode is null", () => {
+    expect(isProfileComplete({ ...base, countryCode: null })).toBe(false);
+  });
+  it("returns false when cityId is null", () => {
+    expect(isProfileComplete({ ...base, cityId: null })).toBe(false);
+  });
+  it("returns false when timezone is null", () => {
+    expect(isProfileComplete({ ...base, timezone: null })).toBe(false);
+  });
+  it("returns false when all four are null", () => {
+    expect(
+      isProfileComplete({ ...base, displayName: null, countryCode: null, cityId: null, timezone: null })
+    ).toBe(false);
+  });
+});
+```
+
+**File:** `src/__tests__/lib/permissions.test.ts`
+
+This file tests the **negative cases** — the ones that prevent security breaches.
+
+```typescript
+import { describe, it, expect } from "vitest";
+
+// We test the permission logic as a pure function.
+// The actual requireRole() calls auth() which hits Clerk — we can't unit test that.
+// Instead, extract the decision logic into a testable helper:
+
+type RoleCheck = {
+  staffRole: string | null;
+  allowedRoles: string[];
+};
+
+function isRoleAllowed({ staffRole, allowedRoles }: RoleCheck): boolean {
+  if (!staffRole) return false;
+  return allowedRoles.includes(staffRole);
+}
+
+describe("permission checks — NEGATIVE cases (these prevent breaches)", () => {
+  it("rejects null staffRole for admin routes", () => {
+    expect(isRoleAllowed({ staffRole: null, allowedRoles: ["admin", "super_admin"] })).toBe(false);
+  });
+
+  it("rejects content_creator from admin routes", () => {
+    expect(isRoleAllowed({ staffRole: "content_creator", allowedRoles: ["admin", "super_admin"] })).toBe(false);
+  });
+
+  it("rejects admin from super_admin-only routes", () => {
+    expect(isRoleAllowed({ staffRole: "admin", allowedRoles: ["super_admin"] })).toBe(false);
+  });
+
+  it("rejects content_creator from super_admin-only routes", () => {
+    expect(isRoleAllowed({ staffRole: "content_creator", allowedRoles: ["super_admin"] })).toBe(false);
+  });
+});
+
+describe("permission checks — POSITIVE cases", () => {
+  it("allows admin for admin routes", () => {
+    expect(isRoleAllowed({ staffRole: "admin", allowedRoles: ["admin", "super_admin"] })).toBe(true);
+  });
+
+  it("allows super_admin for admin routes", () => {
+    expect(isRoleAllowed({ staffRole: "super_admin", allowedRoles: ["admin", "super_admin"] })).toBe(true);
+  });
+
+  it("allows super_admin for super_admin-only routes", () => {
+    expect(isRoleAllowed({ staffRole: "super_admin", allowedRoles: ["super_admin"] })).toBe(true);
+  });
+
+  it("allows content_creator for staff routes", () => {
+    expect(
+      isRoleAllowed({ staffRole: "content_creator", allowedRoles: ["content_creator", "admin", "super_admin"] })
+    ).toBe(true);
+  });
+});
+```
+
+> **Implementation note:** Extract `isRoleAllowed` into `src/lib/auth.ts` as a pure helper that `requireRole` calls internally. This makes the critical decision logic testable without mocking Clerk.
+
+#### Webhook handler (~4 tests) — Phase 3
+
+**File:** `src/__tests__/webhooks/clerk.test.ts`
+
+These are integration tests that verify the webhook handler puts the database in the correct state. They require a test database.
+
+| # | Test name | What it proves |
+|---|---|---|
+| 1 | `user.created inserts row with clerk_user_id and email` | Happy path — the most basic contract |
+| 2 | `user.created with SUPER_ADMIN_EMAIL bootstraps super_admin` | The bootstrap mechanism works |
+| 3 | `user.created with invitation metadata sets staff_role` | Invitation flow correctly promotes |
+| 4 | `user.deleted anonymizes but preserves the row` | Privacy compliance — row exists but PII is gone |
+
+These are marked 🔴 TDD — write them before modifying the webhook handler in Phase 3.
+
+#### Voting logic (~10 tests) — Phase 4
+
+**File:** `src/__tests__/lib/voting.test.ts` (unit, TDD 🔴)
+
+| # | Test name | What it proves |
+|---|---|---|
+| 1 | `computeVotingPower returns 1 for 0 points` | Floor bracket |
+| 2 | `computeVotingPower returns 1 for 9 points` | Upper boundary of bracket 1 |
+| 3 | `computeVotingPower returns 2 for 10 points` | Lower boundary of bracket 2 |
+| 4 | `computeVotingPower returns 3 for 30 points` | Bracket 3 |
+| 5 | `computeVotingPower returns 4 for 60 points` | Bracket 4 |
+| 6 | `computeVotingPower returns 5 for 100 points` | Bracket 5 |
+| 7 | `computeVotingPower returns 5 for 999 points` | Ceiling — never exceeds 5 |
+
+**File:** `src/__tests__/lib/voting.integration.test.ts` (integration, TDD 🔴)
+
+| # | Test name | What it proves |
+|---|---|---|
+| 8 | `castVote as super_admin throws 403` | **Axiom 2: The Architect cannot vote** |
+| 9 | `castVote on closed poll throws 400` | Temporal integrity |
+| 10 | `castVote duplicate on same poll throws 409` | One vote per user per poll |
+
+#### Points system (~4 tests) — Phase 4
+
+**File:** `src/__tests__/lib/points.test.ts` (integration, TDD 🔴)
+
+| # | Test name | What it proves |
+|---|---|---|
+| 1 | `awardPoint increments contribution_points by 1` | Basic contract |
+| 2 | `awardPoint returns false on duplicate (rate-limited)` | Rate limiting works |
+| 3 | `duplicate awardPoint does NOT increment contribution_points` | Monotonicity isn't cheatable |
+| 4 | `contribution_points can never go below zero (CHECK constraint)` | DB-level safety net |
+
+#### Env validation (~8 tests) — Phase 0 ✅ ALREADY EXISTS
+
+**File:** `src/__tests__/env.test.ts` — 8 tests, all passing. No additions needed.
+
+#### Total: ~32 tests across 6 files
+
+That's it. No bloat. Every test guards a real catastrophe.
+
 ---
 
 ## 2. Current state (as of 2026-04-24)
@@ -495,29 +658,473 @@ Stand up the admin surface at `admin.<domain>`, bootstrap Dean as the super-admi
 
 ### 5.5 Tasks
 
-Detailed tasks follow the same shape as Phase 2 (numbered, with acceptance criteria). The key tasks are:
+#### Task 3.1 — Decide routing: path-based `/admin/*` first, subdomain later
 
-1. **Task 3.1 — Add subdomain routing.** Read Next.js docs on [multi-zones](https://nextjs.org/docs/app/guides/multi-zones) or implement a host-header check in proxy. Ask the user which approach they prefer before starting.
-2. **Task 3.2 — Add `SUPER_ADMIN_EMAIL` env var + bootstrap logic.** Update webhook, add ADR-0026 to document the bootstrap mechanism.
-3. **Task 3.3 — Build auth helpers.** `requireRole`, `requireStaff`, `requireSuperAdmin`.
-4. **Task 3.4 — Build audit helper.** `logEvent(...)` wrapper. Write an integration test that actually hits Neon.
-5. **Task 3.5 — Build the admin dashboard shell.** Empty pages with role-conditional content.
-6. **Task 3.6 — Build the invitation flow.** Staff invites → Clerk API → webhook handler → `/onboarding` with staff fields section.
+**Decision (pre-made — do not re-open):** The user does not yet have a custom domain. Vercel's `.vercel.app` domains do not support arbitrary subdomains. Therefore:
+
+1. **Now:** use path-based routing (`/admin/*`) with a server-side layout gate (`requireStaff()`).
+2. **Later (when domain is purchased):** add a proxy-level host check to redirect `admin.<domain>` to the `/admin` route group. This is a one-line proxy change + DNS config.
+
+**Write ADR-0026** documenting this temporary deviation:
+
+```markdown
+## ADR-0026 — Admin routing via /admin/* paths (subdomain deferred)
+
+- **Date:** <today>
+- **Status:** accepted
+
+**Context.** ADR-0003 specifies subdomain-based admin routing (`admin.<domain>`).
+The project does not yet have a custom domain; Vercel's `.vercel.app` domains do
+not support arbitrary subdomains.
+
+**Decision.** Use path-based routing (`/admin/*`) with a server-side layout gate
+(`requireStaff()`) for now. When a custom domain is purchased, add a proxy-level
+host check to redirect `admin.<domain>` to the `/admin` route group. This ADR
+will be superseded at that time.
+
+**Consequences.**
+- (+) Unblocks Phase 3 without waiting on DNS.
+- (+) The route group structure (`src/app/admin/`) is identical either way.
+- (−) The clean URL separation of ADR-0003 is deferred.
+
+**Alternatives considered.**
+- **Wait for domain** — blocks progress on the entire admin surface.
+```
+
+**Files to modify:** `src/proxy.ts` — add `/admin(.*)` to the authenticated-only routes (already covered by the default `auth.protect()` gate — verify).
+
+**Acceptance:** `/admin` requires authentication. No subdomain configuration needed.
+
+#### Task 3.2 — Add `SUPER_ADMIN_EMAIL` env var
+
+**Files to modify:**
+
+1. `src/env.ts` — add to the schema:
+   ```typescript
+   SUPER_ADMIN_EMAIL: z.string().email(),
+   ```
+
+2. `.env.example` — add:
+   ```
+   # The email that will be bootstrapped as super-admin on first sign-up
+   SUPER_ADMIN_EMAIL=dean@example.com
+   ```
+
+3. `.env.local` — set to Dean's real email address.
+
+4. `src/__tests__/env.test.ts` — add `SUPER_ADMIN_EMAIL: "dean@test.com"` to the `validServer` object and add it to the `serverSchema`.
+
+**Acceptance:** `npm run test:unit` passes; `npm run build` passes.
+
+#### Task 3.3 — Super-admin bootstrap in webhook handler
+
+**File to modify:** `src/app/api/webhooks/clerk/route.ts`
+
+After the existing `db.insert(users).values(...)` in the `user.created` branch, add the bootstrap check:
+
+```typescript
+// Super-admin bootstrap (runs once ever — see ADR-0027)
+if (primaryEmail.email_address === env.SUPER_ADMIN_EMAIL) {
+  const [existingSuperAdmin] = await db
+    .select({ count: count() })
+    .from(users)
+    .where(eq(users.staffRole, "super_admin"));
+
+  if (existingSuperAdmin.count === 0) {
+    await db
+      .update(users)
+      .set({ staffRole: "super_admin" })
+      .where(eq(users.clerkUserId, data.id));
+
+    // Find the newly created user's internal ID for the audit log
+    const [newUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.clerkUserId, data.id));
+
+    if (newUser) {
+      await db.insert(auditEvents).values({
+        eventType: "staff.super_admin_bootstrapped",
+        targetUserId: newUser.id,
+        payload: { email: primaryEmail.email_address },
+      });
+    }
+  }
+}
+```
+
+Add imports: `import { count } from "drizzle-orm";` and `import { auditEvents } from "@/db/schema";`
+
+**Write ADR-0027** (super-admin bootstrap via env var):
+
+```markdown
+## ADR-0027 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var
+
+- **Date:** <today>
+- **Status:** accepted
+
+**Context.** The system needs exactly one super-admin. The first sign-up matching
+a known email address should be automatically promoted.
+
+**Decision.** A new env var `SUPER_ADMIN_EMAIL` is checked on every `user.created`
+webhook. If the email matches AND no super-admin exists yet, the user is promoted
+to `staff_role = 'super_admin'`. This happens exactly once in the lifetime of the
+system.
+
+**Consequences.**
+- (+) No manual DB surgery needed to bootstrap.
+- (+) Runs only once; idempotent after that.
+- (−) The env var is a secret that, if changed, could theoretically bootstrap a
+  second super-admin. Mitigated by the "no super-admin exists" check.
+
+**Alternatives considered.**
+- **Manual SQL** — error-prone, undocumented.
+- **Seed script** — requires the Clerk user to exist first; chicken-and-egg.
+```
+
+**Acceptance:**
+1. Sign up with the `SUPER_ADMIN_EMAIL` → `users` row has `staff_role = 'super_admin'`.
+2. `audit_events` has a row with `event_type = 'staff.super_admin_bootstrapped'`.
+3. Sign up a second user → they are NOT promoted.
+
+#### Task 3.4 — Build auth helpers
+
+**File to create:** `src/lib/auth.ts`
+
+```typescript
+import "server-only";
+import { auth } from "@clerk/nextjs/server";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import type { User } from "@/db/schema";
+
+/**
+ * Get the full user record for the currently authenticated Clerk user.
+ * Returns null if not authenticated or if the user row doesn't exist yet
+ * (between Clerk sign-up and webhook processing).
+ */
+export async function currentUser(): Promise<User | null> {
+  const { userId } = await auth();
+  if (!userId) return null;
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.clerkUserId, userId));
+
+  return user ?? null;
+}
+
+/**
+ * Throw a Response with the appropriate status if the current user
+ * doesn't have one of the allowed staff roles.
+ */
+export async function requireRole(
+  ...allowedRoles: Array<"content_creator" | "admin" | "super_admin">
+): Promise<User> {
+  const user = await currentUser();
+  if (!user) throw new Response("Unauthorized", { status: 401 });
+  if (!user.staffRole || !allowedRoles.includes(user.staffRole)) {
+    throw new Response("Forbidden", { status: 403 });
+  }
+  return user;
+}
+
+export async function requireStaff(): Promise<User> {
+  return requireRole("content_creator", "admin", "super_admin");
+}
+
+export async function requireAdmin(): Promise<User> {
+  return requireRole("admin", "super_admin");
+}
+
+export async function requireSuperAdmin(): Promise<User> {
+  return requireRole("super_admin");
+}
+
+/**
+ * Returns true if the user's four onboarding fields are all non-null.
+ * Used by the proxy to gate incomplete profiles.
+ */
+export function isProfileComplete(user: User): boolean {
+  return (
+    user.displayName !== null &&
+    user.countryCode !== null &&
+    user.cityId !== null &&
+    user.timezone !== null
+  );
+}
+```
+
+**Test file to create:** `src/__tests__/lib/auth.test.ts`
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { isProfileComplete } from "@/lib/auth";
+
+// Test isProfileComplete with mock User objects
+const completeUser = {
+  displayName: "TestUser",
+  countryCode: "US",
+  cityId: 1,
+  timezone: "America/New_York",
+} as any;
+
+describe("isProfileComplete", () => {
+  it("returns true when all four fields are set", () => {
+    expect(isProfileComplete(completeUser)).toBe(true);
+  });
+
+  it("returns false when displayName is null", () => {
+    expect(isProfileComplete({ ...completeUser, displayName: null })).toBe(false);
+  });
+
+  it("returns false when countryCode is null", () => {
+    expect(isProfileComplete({ ...completeUser, countryCode: null })).toBe(false);
+  });
+
+  it("returns false when cityId is null", () => {
+    expect(isProfileComplete({ ...completeUser, cityId: null })).toBe(false);
+  });
+
+  it("returns false when timezone is null", () => {
+    expect(isProfileComplete({ ...completeUser, timezone: null })).toBe(false);
+  });
+
+  it("returns false when all four are null", () => {
+    expect(
+      isProfileComplete({
+        ...completeUser,
+        displayName: null,
+        countryCode: null,
+        cityId: null,
+        timezone: null,
+      })
+    ).toBe(false);
+  });
+});
+```
+
+**Acceptance:** `npm run test:unit` passes with the new tests.
+
+#### Task 3.5 — Build audit helper
+
+**File to create:** `src/lib/audit.ts`
+
+```typescript
+import "server-only";
+import { db } from "@/db";
+import { auditEvents } from "@/db/schema";
+
+type LogEventParams = {
+  eventType: string;
+  actorUserId?: string | null;
+  targetUserId?: string | null;
+  payload?: Record<string, unknown>;
+};
+
+/**
+ * Insert an audit event. Call this in the same transaction as the state change
+ * it records — see ADR-0014.
+ */
+export async function logEvent({
+  eventType,
+  actorUserId = null,
+  targetUserId = null,
+  payload = {},
+}: LogEventParams) {
+  await db.insert(auditEvents).values({
+    eventType,
+    actorUserId,
+    targetUserId,
+    payload,
+  });
+}
+```
+
+**Acceptance:** function exists; used by Task 3.3's bootstrap logic. A unit test can mock `db.insert` and verify the shape of the values object.
+
+#### Task 3.6 — Build the admin layout and dashboard shell
+
+**File to create:** `src/app/admin/layout.tsx`
+
+```tsx
+import { redirect } from "next/navigation";
+import { currentUser } from "@/lib/auth";
+
+export default async function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const user = await currentUser();
+
+  // Not authenticated at all
+  if (!user) redirect("/sign-in");
+
+  // Authenticated but not staff
+  if (!user.staffRole) {
+    // Return 403 via notFound or a custom error page
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <h1 className="text-2xl font-bold">403 — Forbidden</h1>
+        <p>You do not have access to the admin area.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-screen">
+      {/* Sidebar — role-conditional items will be built out in sub-tasks */}
+      <aside className="w-64 bg-zinc-900 text-white p-6">
+        <h2 className="text-lg font-bold mb-6">Admin</h2>
+        <nav className="flex flex-col gap-2">
+          <a href="/admin" className="hover:underline">Dashboard</a>
+          {(user.staffRole === "admin" || user.staffRole === "super_admin") && (
+            <a href="/admin/users" className="hover:underline">Users</a>
+          )}
+          {user.staffRole === "super_admin" && (
+            <a href="/admin/admins" className="hover:underline">Admin Management</a>
+          )}
+        </nav>
+      </aside>
+      <main className="flex-1 p-8">{children}</main>
+    </div>
+  );
+}
+```
+
+**File to create:** `src/app/admin/page.tsx`
+
+```tsx
+import { requireStaff } from "@/lib/auth";
+
+export default async function AdminDashboardPage() {
+  const user = await requireStaff();
+
+  return (
+    <div>
+      <h1 className="text-3xl font-bold mb-4">Admin Dashboard</h1>
+      <p className="text-zinc-600">
+        Signed in as <strong>{user.displayName ?? user.email}</strong>
+        {" "}({user.staffRole})
+      </p>
+      {/* Dashboard tiles will be expanded as features are built */}
+    </div>
+  );
+}
+```
+
+**Acceptance:** A user with `staff_role = 'super_admin'` can access `/admin`. A non-staff user sees the 403 message.
+
+#### Task 3.7 — Build the invitation flow
+
+**File to create:** `src/app/admin/invites/new/page.tsx`
+
+A form with fields:
+- Email address (text input)
+- Role to invite as (select: `content_creator` or `admin`)
+  - Content creators can only be invited by admins+
+  - Admins can only be invited by super-admin
+  - The role selector should only show options the current user can invite
+
+**File to create:** `src/app/admin/invites/new/actions.ts`
+
+Server action `sendInvitation`:
+1. Validate current user has permission (admin can invite content_creator; super_admin can invite admin or content_creator)
+2. Call Clerk's Invitation API:
+   ```typescript
+   import { clerkClient } from "@clerk/nextjs/server";
+
+   const invitation = await clerkClient().invitations.createInvitation({
+     emailAddress: email,
+     publicMetadata: {
+       staffRole: role,
+       invitedByUserId: currentUser.id,
+     },
+   });
+   ```
+3. Log the invitation in `audit_events` via `logEvent`
+4. Return success
+
+**Modify:** `src/app/api/webhooks/clerk/route.ts`
+
+In the `user.created` handler, after the initial insert, add a check for staff invitation metadata:
+
+```typescript
+// Check if this user was invited as staff
+const metadata = data.public_metadata as {
+  staffRole?: string;
+  invitedByUserId?: string;
+} | undefined;
+
+if (metadata?.staffRole && metadata?.invitedByUserId) {
+  const [inviter] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.id, metadata.invitedByUserId));
+
+  if (inviter) {
+    await db
+      .update(users)
+      .set({
+        staffRole: metadata.staffRole as "content_creator" | "admin",
+        invitedByUserId: inviter.id,
+        invitedAt: new Date(),
+      })
+      .where(eq(users.clerkUserId, data.id));
+  }
+}
+```
+
+**Write ADR-0028** (staff invitations via Clerk API with metadata).
+
+**Acceptance:**
+1. Dean (super-admin) visits `/admin/invites/new`, enters an email and selects "admin" → Clerk sends an invite email.
+2. The invitee signs up via the Clerk link → their `users` row has `staff_role = 'admin'`, `invited_by_user_id` set, and `invited_at` set.
+3. `audit_events` has rows for both the invitation and the acceptance.
+
+#### Task 3.8 — Write mandatory tests for auth, permissions, and webhooks
+
+This is the most important task in Phase 3. These tests guard against security breaches and data corruption. **Write them before the implementation they test (TDD 🔴).**
+
+Refer to §1.9 (the mandatory test registry) for the exact test code and specifications. The files to create:
+
+1. `src/__tests__/lib/auth.test.ts` — 6 tests for `isProfileComplete` (code provided in §1.9)
+2. `src/__tests__/lib/permissions.test.ts` — 8 tests for role-checking logic (code provided in §1.9)
+3. `src/__tests__/webhooks/clerk.test.ts` — 4 integration tests for the webhook handler (specs in §1.9)
+
+**Implementation detail:** Extract the role-checking decision from `requireRole` into a pure helper `isRoleAllowed({ staffRole, allowedRoles })` so it can be unit tested without mocking Clerk. The `requireRole` function calls `isRoleAllowed` internally.
+
+**Acceptance:**
+1. All 18 tests pass (`npm run test:unit`).
+2. Every negative case (unauthorized access attempt) is explicitly covered.
+3. The webhook tests prove the DB ends in the right state for each event type.
 
 ### 5.6 ADRs to write
 
-- **ADR-0026 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var.** Fixed at system init; intentional single-use mechanism.
-- **ADR-0027 — Subdomain routing approach.** Whichever approach is chosen after Task 3.1.
+- **ADR-0026 — Admin routing via /admin/* paths (subdomain deferred).** Path-based routing now; subdomain when domain is purchased.
+- **ADR-0027 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var.** Fixed at system init; intentional single-use mechanism.
 - **ADR-0028 — Staff invitations use Clerk's invitation API with metadata.** Document why (no parallel invitation system; staff fields captured during normal onboarding with a staff section).
 
 ### 5.7 Definition of done for Phase 3
 
-- [ ] `admin.<domain>` serves the admin dashboard; non-staff get a 403.
-- [ ] Dean is super-admin and can sign in at `admin.<domain>`.
-- [ ] Dean can invite an admin; the invite email arrives; the invitee can accept and complete onboarding with staff fields.
+- [ ] `SUPER_ADMIN_EMAIL` env var added to schema, example, and local.
+- [ ] Webhook handler bootstraps super-admin on first matching sign-up.
+- [ ] Auth helpers (`requireRole`, `requireStaff`, etc.) exist and are tested.
+- [ ] **`isRoleAllowed` extracted as a pure helper and unit-tested (8 tests).**
+- [ ] **Webhook handler integration-tested (4 tests) — see §1.9.**
+- [ ] Audit helper (`logEvent`) exists.
+- [ ] `/admin` layout gates non-staff users with a 403.
+- [ ] Admin dashboard shows role-conditional content.
+- [ ] Dean is super-admin and can access `/admin`.
+- [ ] Dean can invite an admin via `/admin/invites/new`; the invite email arrives; the invitee can sign up and gets `staff_role = 'admin'`.
 - [ ] Admins can invite content creators.
 - [ ] `audit_events` has rows for every role transition and invitation.
-- [ ] Unit + integration tests passing for `requireRole` and `logEvent`.
+- [ ] Unit tests passing for `isProfileComplete` and auth helpers.
+- [ ] **All 18 Phase 3 tests passing.**
+- [ ] ADRs 0026, 0027, 0028 written.
 
 ---
 
@@ -546,32 +1153,563 @@ Implement the full voting pipeline: Episodes, Papers, Challenges, Polls, Votes, 
 - **Dean cannot vote** — enforced in the `castVote` server action via `requireNotSuperAdmin`. Hard-coded, not configuration-driven.
 - **Tie-breaking:** per ADR-0022 — earliest publication wins. `poll_options.created_at` is the tiebreak key.
 
-### 6.4 Files to create (outline; full list in this phase's expanded plan)
+### 6.4 Task list
 
-- `src/db/schema/episodes.ts`, `papers.ts`, `challenges.ts`, `polls.ts`, `votes.ts`, `point_awards.ts`
-- `src/db/mongo.ts` — MongoDB client (if not already created)
-- `src/db/mongo/proposals.ts` — proposal collection schema (Zod) + repository functions
-- `src/lib/voting.ts` — `castVote`, `computeVotingPower`, `tallyPoll`, `closePoll`
-- `src/lib/points.ts` — `awardPoint` (transactional: insert point_award + increment users.contribution_points)
-- Admin UI for creating episodes, publishing proposals, closing polls
-- Public UI for the active poll (list options, vote button, show result when poll closed)
-- Vast test suite — this is a critical path, so TDD it rigorously
+#### Task 4.1 — Drizzle schemas for voting entities
+
+**New files to create in `src/db/schema/`:**
+
+`src/db/schema/episodes.ts`:
+```typescript
+import { integer, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+
+export const episodeStatusEnum = pgEnum("episode_status", [
+  "paper_selected",
+  "challenge_selected",
+  "in_production",
+  "bar_reviewed",
+  "verdict_cast",
+  "archived",
+]);
+
+export const verdictEnum = pgEnum("verdict", ["stamped", "ripped"]);
+
+export const episodes = pgTable("episodes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  episodeNumber: integer("episode_number").notNull().unique(),
+  status: episodeStatusEnum("status").notNull().default("paper_selected"),
+  verdict: verdictEnum("verdict"),
+  selectedPaperId: uuid("selected_paper_id"),
+  selectedChallengeId: uuid("selected_challenge_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export type Episode = typeof episodes.$inferSelect;
+export type NewEpisode = typeof episodes.$inferInsert;
+```
+
+`src/db/schema/papers.ts`:
+```typescript
+import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { episodes } from "./episodes";
+
+export const papers = pgTable("papers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  manufacturer: text("manufacturer"),
+  description: text("description"),
+  episodeId: uuid("episode_id").references(() => episodes.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Paper = typeof papers.$inferSelect;
+```
+
+`src/db/schema/challenges.ts`:
+```typescript
+import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { episodes } from "./episodes";
+
+export const challenges = pgTable("challenges", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  benchmarkText: text("benchmark_text").notNull(),
+  trapText: text("trap_text").notNull(),
+  episodeId: uuid("episode_id").references(() => episodes.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Challenge = typeof challenges.$inferSelect;
+```
+
+`src/db/schema/polls.ts`:
+```typescript
+import { pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { episodes } from "./episodes";
+
+export const pollTypeEnum = pgEnum("poll_type", [
+  "paper_selection",
+  "challenge_selection",
+]);
+
+export const polls = pgTable("polls", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  episodeId: uuid("episode_id").notNull().references(() => episodes.id),
+  pollType: pollTypeEnum("poll_type").notNull(),
+  opensAt: timestamp("opens_at", { withTimezone: true }).notNull(),
+  closesAt: timestamp("closes_at", { withTimezone: true }).notNull(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const pollOptions = pgTable("poll_options", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  pollId: uuid("poll_id").notNull().references(() => polls.id),
+  optionReferenceId: uuid("option_reference_id").notNull(),
+  label: text("label").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Poll = typeof polls.$inferSelect;
+export type PollOption = typeof pollOptions.$inferSelect;
+```
+
+`src/db/schema/votes.ts`:
+```typescript
+import { integer, pgTable, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { users } from "./users";
+import { pollOptions } from "./polls";
+
+export const votes = pgTable("votes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  pollOptionId: uuid("poll_option_id").notNull().references(() => pollOptions.id),
+  weight: integer("weight").notNull(),
+  castedAt: timestamp("casted_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // One vote per user per poll option
+  unique("votes_user_poll_option_unique").on(t.userId, t.pollOptionId),
+]);
+
+export type Vote = typeof votes.$inferSelect;
+```
+
+> **Important:** The unique constraint above is per poll_option, not per poll. To enforce one-vote-per-poll (not one-vote-per-option), the `castVote` function must check: "does this user already have a vote on ANY option in this poll?" This is an application-level check, not a DB constraint, because the `votes` table doesn't have a direct `poll_id` column.
+
+`src/db/schema/point_awards.ts`:
+```typescript
+import { pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { users } from "./users";
+
+export const pointAwards = pgTable("point_awards", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  actionId: text("action_id").notNull(),
+  targetId: text("target_id"),
+  awardedAt: timestamp("awarded_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // Rate limit: one award per user per action per target
+  unique("point_awards_rate_limit").on(t.userId, t.actionId, t.targetId),
+]);
+
+export type PointAward = typeof pointAwards.$inferSelect;
+```
+
+**Modify `src/db/schema/index.ts`** — add exports for all new schema files:
+```typescript
+export * from "./enums";
+export * from "./cities";
+export * from "./users";
+export * from "./audit";
+export * from "./episodes";
+export * from "./papers";
+export * from "./challenges";
+export * from "./polls";
+export * from "./votes";
+export * from "./point_awards";
+```
+
+**Run:**
+1. `npm run db:generate` — creates the migration SQL
+2. Review the generated SQL in `drizzle/` for correctness
+3. `npm run db:migrate` — applies to Neon
+
+**Acceptance:** Migration applies cleanly; `npm run db:studio` shows all new tables.
+
+#### Task 4.2 — MongoDB client and proposal schema
+
+**Install:** `npm install mongodb`
+
+**File to create:** `src/db/mongo.ts`
+
+```typescript
+import "server-only";
+import { MongoClient } from "mongodb";
+
+// Use process.env directly here (same pattern as db/index.ts — see build-plan §11 note)
+const client = new MongoClient(process.env.MONGODB_URI!);
+const clientPromise = client.connect();
+
+export async function getMongoDb() {
+  const c = await clientPromise;
+  return c.db("ripped");
+}
+```
+
+**File to create:** `src/db/mongo/proposals.ts`
+
+```typescript
+import { z } from "zod";
+import { getMongoDb } from "../mongo";
+
+export const proposalStatusEnum = z.enum(["draft", "submitted", "published", "rejected"]);
+export const proposalTypeEnum = z.enum(["paper", "challenge"]);
+
+export const proposalSchema = z.object({
+  type: proposalTypeEnum,
+  status: proposalStatusEnum,
+  authorUserId: z.string().uuid(),
+  title: z.string().min(1).max(200),
+  body: z.string().max(5000),
+  // Paper-specific
+  paperName: z.string().optional(),
+  manufacturer: z.string().optional(),
+  // Challenge-specific
+  benchmarkText: z.string().optional(),
+  trapText: z.string().optional(),
+  // Lifecycle timestamps
+  submittedAt: z.date().nullable().optional(),
+  publishedAt: z.date().nullable().optional(),
+  publishedByUserId: z.string().uuid().nullable().optional(),
+  rejectedAt: z.date().nullable().optional(),
+  rejectedByUserId: z.string().uuid().nullable().optional(),
+  rejectionReason: z.string().nullable().optional(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export type Proposal = z.infer<typeof proposalSchema>;
+
+export async function getProposalsCollection() {
+  const db = await getMongoDb();
+  return db.collection<Proposal>("proposals");
+}
+```
+
+**Write ADR-0029** — Mongo proposal schema shape. Document the decision to use Mongo for proposals (document-shaped, no referential integrity needed until publication, at which point the data migrates to Postgres as a `paper` or `challenge` row).
+
+**Acceptance:** MongoDB client connects; proposal schema validates correctly.
+
+#### Task 4.3 — Voting logic (TDD — write tests FIRST)
+
+**Test file to create FIRST:** `src/__tests__/lib/voting.test.ts`
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { computeVotingPower } from "@/lib/voting";
+
+describe("computeVotingPower", () => {
+  it("returns 1 for 0 points", () => {
+    expect(computeVotingPower(0)).toBe(1);
+  });
+  it("returns 1 for 9 points", () => {
+    expect(computeVotingPower(9)).toBe(1);
+  });
+  it("returns 2 for 10 points", () => {
+    expect(computeVotingPower(10)).toBe(2);
+  });
+  it("returns 2 for 29 points", () => {
+    expect(computeVotingPower(29)).toBe(2);
+  });
+  it("returns 3 for 30 points", () => {
+    expect(computeVotingPower(30)).toBe(3);
+  });
+  it("returns 3 for 59 points", () => {
+    expect(computeVotingPower(59)).toBe(3);
+  });
+  it("returns 4 for 60 points", () => {
+    expect(computeVotingPower(60)).toBe(4);
+  });
+  it("returns 4 for 99 points", () => {
+    expect(computeVotingPower(99)).toBe(4);
+  });
+  it("returns 5 for 100 points", () => {
+    expect(computeVotingPower(100)).toBe(5);
+  });
+  it("returns 5 for 999 points", () => {
+    expect(computeVotingPower(999)).toBe(5);
+  });
+});
+```
+
+Run tests — they should **fail** (Red).
+
+**File to create:** `src/lib/voting.ts`
+
+```typescript
+/**
+ * Compute the vote weight for a user based on their contribution points.
+ * Brackets per ADR-0021 and roles-and-ranks.md §6.
+ */
+export function computeVotingPower(contributionPoints: number): number {
+  if (contributionPoints >= 100) return 5;
+  if (contributionPoints >= 60) return 4;
+  if (contributionPoints >= 30) return 3;
+  if (contributionPoints >= 10) return 2;
+  return 1;
+}
+```
+
+Run tests — they should **pass** (Green).
+
+Then add the remaining functions (these require DB access and are harder to unit test — write integration tests or test with mocked DB):
+
+```typescript
+import "server-only";
+import { and, eq, sql, inArray } from "drizzle-orm";
+import { db } from "@/db";
+import { users, votes, polls, pollOptions } from "@/db/schema";
+import { awardPoint } from "@/lib/points";
+
+/**
+ * Cast a vote. Validates eligibility, computes weight, inserts vote, awards point.
+ * Returns the created vote row.
+ *
+ * Throws:
+ * - 403 if the user is super-admin (Axiom 2)
+ * - 409 if the user already voted in this poll
+ * - 400 if the poll is not currently open
+ */
+export async function castVote(userId: string, pollOptionId: string) {
+  // 1. Fetch user
+  const [user] = await db.select().from(users).where(eq(users.id, userId));
+  if (!user) throw new Response("User not found", { status: 404 });
+
+  // 2. Axiom 2: super-admin cannot vote
+  if (user.staffRole === "super_admin") {
+    throw new Response("The Architect cannot vote", { status: 403 });
+  }
+
+  // 3. Fetch the poll option and its poll
+  const [option] = await db
+    .select()
+    .from(pollOptions)
+    .where(eq(pollOptions.id, pollOptionId));
+  if (!option) throw new Response("Poll option not found", { status: 404 });
+
+  const [poll] = await db
+    .select()
+    .from(polls)
+    .where(eq(polls.id, option.pollId));
+  if (!poll) throw new Response("Poll not found", { status: 404 });
+
+  // 4. Check poll is open
+  const now = new Date();
+  if (now < poll.opensAt || now > poll.closesAt || poll.closedAt) {
+    throw new Response("Poll is not open", { status: 400 });
+  }
+
+  // 5. Check user hasn't already voted on ANY option in this poll
+  const existingVote = await db
+    .select({ id: votes.id })
+    .from(votes)
+    .innerJoin(pollOptions, eq(votes.pollOptionId, pollOptions.id))
+    .where(
+      and(
+        eq(votes.userId, userId),
+        eq(pollOptions.pollId, poll.id)
+      )
+    )
+    .limit(1);
+
+  if (existingVote.length > 0) {
+    throw new Response("Already voted in this poll", { status: 409 });
+  }
+
+  // 6. Compute weight
+  const weight = computeVotingPower(user.contributionPoints);
+
+  // 7. Insert vote
+  const [vote] = await db.insert(votes).values({
+    userId,
+    pollOptionId,
+    weight,
+  }).returning();
+
+  // 8. Award contribution point
+  const actionId = poll.pollType === "paper_selection"
+    ? "vote.paper_selection"
+    : "vote.challenge_selection";
+  await awardPoint(userId, actionId, poll.id);
+
+  return vote;
+}
+
+/**
+ * Tally a poll's results. Returns options sorted by weighted vote count (desc).
+ * On tie, sorts by earliest createdAt (per ADR-0022).
+ */
+export async function tallyPoll(pollId: string) {
+  const options = await db
+    .select({
+      optionId: pollOptions.id,
+      label: pollOptions.label,
+      createdAt: pollOptions.createdAt,
+      weightedTotal: sql<number>`COALESCE(SUM(${votes.weight}), 0)`.as("weighted_total"),
+      voteCount: sql<number>`COUNT(${votes.id})`.as("vote_count"),
+    })
+    .from(pollOptions)
+    .leftJoin(votes, eq(votes.pollOptionId, pollOptions.id))
+    .where(eq(pollOptions.pollId, pollId))
+    .groupBy(pollOptions.id, pollOptions.label, pollOptions.createdAt)
+    .orderBy(
+      sql`COALESCE(SUM(${votes.weight}), 0) DESC`,
+      sql`${pollOptions.createdAt} ASC`  // tiebreak: earliest published
+    );
+
+  return options;
+}
+
+/**
+ * Close a poll. Sets closedAt to now. Determines the winner.
+ */
+export async function closePoll(pollId: string, actorUserId: string) {
+  await db
+    .update(polls)
+    .set({ closedAt: new Date() })
+    .where(eq(polls.id, pollId));
+
+  const results = await tallyPoll(pollId);
+  const winner = results[0]; // First after sort = winner (tiebreak built in)
+
+  return { results, winner };
+}
+```
+
+**Acceptance:** `computeVotingPower` tests pass. Integration tests for `castVote` and `tallyPoll` should be written once the DB is available.
+
+#### Task 4.4 — Points system (TDD)
+
+**Test file to create FIRST:** `src/__tests__/lib/points.test.ts`
+
+Test the pure logic of point awarding. Since `awardPoint` hits the DB, mock the DB layer or write as an integration test.
+
+**File to create:** `src/lib/points.ts`
+
+```typescript
+import "server-only";
+import { eq, sql } from "drizzle-orm";
+import { db } from "@/db";
+import { pointAwards, users } from "@/db/schema";
+
+/**
+ * Award a single contribution point to a user for a specific action on a target.
+ * Uses INSERT ... ON CONFLICT DO NOTHING for rate limiting (one point per
+ * user × action × target). If the point was already awarded, this is a no-op.
+ *
+ * Returns true if the point was awarded, false if it was a duplicate.
+ */
+export async function awardPoint(
+  userId: string,
+  actionId: string,
+  targetId: string | null
+): Promise<boolean> {
+  // Attempt to insert — if the unique constraint (userId, actionId, targetId)
+  // is violated, this returns 0 rows.
+  const result = await db
+    .insert(pointAwards)
+    .values({ userId, actionId, targetId })
+    .onConflictDoNothing({
+      target: [pointAwards.userId, pointAwards.actionId, pointAwards.targetId],
+    })
+    .returning({ id: pointAwards.id });
+
+  if (result.length === 0) {
+    // Duplicate — rate-limited
+    return false;
+  }
+
+  // Point was awarded — increment the user's contribution_points
+  await db
+    .update(users)
+    .set({
+      contributionPoints: sql`${users.contributionPoints} + 1`,
+    })
+    .where(eq(users.id, userId));
+
+  return true;
+}
+```
+
+**Acceptance:** `awardPoint` inserts a `point_awards` row and increments `contribution_points` on first call; returns `false` on duplicate.
+
+#### Task 4.5 — Admin UI for episodes and polls
+
+**Files to create:**
+
+| Path | Purpose |
+|---|---|
+| `src/app/admin/episodes/page.tsx` | List all episodes with status badges |
+| `src/app/admin/episodes/new/page.tsx` | Create episode form (title, episode number) |
+| `src/app/admin/episodes/new/actions.ts` | Server action: insert episode + audit log |
+| `src/app/admin/episodes/[id]/page.tsx` | Episode detail — status controls, linked polls |
+| `src/app/admin/episodes/[id]/actions.ts` | Server action: advance episode status |
+| `src/app/admin/polls/new/page.tsx` | Create poll for an episode (type, open/close times, add options) |
+| `src/app/admin/polls/new/actions.ts` | Server action: insert poll + options |
+| `src/app/admin/polls/[id]/page.tsx` | Poll detail — live tally, close button |
+| `src/app/admin/polls/[id]/actions.ts` | Server action: close poll, determine winner |
+
+Each admin page:
+- Uses `requireAdmin()` at the top for permission gating
+- Logs state transitions via `logEvent()`
+- Shows appropriate feedback on success/error
+
+**Acceptance:** Admin can create an episode → create a poll for it → add options → see the poll live.
+
+#### Task 4.6 — Public voting UI
+
+**Files to create:**
+
+| Path | Purpose |
+|---|---|
+| `src/app/vote/page.tsx` | List active (open) polls |
+| `src/app/vote/[pollId]/page.tsx` | Vote on a specific poll |
+| `src/app/vote/[pollId]/actions.ts` | Server action: calls `castVote()` |
+| `src/app/vote/[pollId]/results/page.tsx` | Poll results (premium-gated) |
+
+**Vote page behavior:**
+- Show poll question and options
+- User clicks an option → server action calls `castVote()`
+- On success: show confirmation, disable voting buttons
+- If already voted: show which option they voted for, disable buttons
+- If poll closed: show "Poll closed" message + link to results
+
+**Results page behavior:**
+- Premium users: see full tally with weighted totals and vote counts
+- Free users: see "UNLOCK" affordance with upgrade prompt
+- Staff: always see results (implicit premium access per permission matrix §2.2)
+
+**Acceptance:** A test user can visit `/vote`, see an open poll, cast a vote, and see their vote confirmed.
+
+#### Task 4.7 — Write comprehensive tests
+
+This is a critical path — TDD is mandatory per working agreement §1.2.
+
+**Tests to write:**
+
+| File | What it tests | Type |
+|---|---|---|
+| `src/__tests__/lib/voting.test.ts` | `computeVotingPower` bracket boundaries | Unit |
+| `src/__tests__/lib/voting.integration.test.ts` | `castVote` — happy path, super-admin block, duplicate vote, closed poll | Integration |
+| `src/__tests__/lib/points.test.ts` | `awardPoint` — first award, duplicate (rate-limited) | Integration |
+| `src/__tests__/voting/tally.test.ts` | `tallyPoll` — weighted totals, tiebreak by createdAt | Integration |
+| `tests/e2e/voting.spec.ts` | Full flow: admin creates poll → user votes → admin closes → results shown | E2E |
+
+**Target: ≥90% branch coverage on `src/lib/voting.ts` and `src/lib/points.ts`.**
 
 ### 6.5 ADRs to write
 
-Expected (specifics will emerge during implementation):
-
-- ADR for the Mongo proposal schema (we have not yet pinned the Mongo schema; that happens here)
-- ADR for episode lifecycle enforcement (state machine in DB vs. in code)
-- ADR for the rate-limit uniqueness mechanism
+- **ADR-0029 — Mongo proposal schema.** Document the schema shape, why Mongo (document-shaped, no FK needed until publication), and the publication flow (Mongo draft → Postgres paper/challenge row).
+- **ADR-0030 — Episode state machine enforced in application code.** The `episodes.status` enum constrains valid states; the application code enforces valid transitions. No DB-level trigger. Reason: simpler to test and debug.
+- **ADR-0031 — Rate limiting via unique constraint on point_awards.** `ON CONFLICT DO NOTHING` handles duplicates; no Redis/Upstash needed for v1's small action catalog.
+- **ADR-0032 — One vote per poll enforced at application level.** The DB has a unique constraint per (user, poll_option), but the "one vote per poll across all options" check is done in application code because `votes` doesn't have a direct `poll_id` column. Document why this is acceptable (the join check is fast and well-tested).
 
 ### 6.6 Definition of done for Phase 4
 
-- [ ] End-to-end: Dean publishes a paper selection poll → a test user votes → tally reflects the vote with correct weight → user earns one contribution point.
-- [ ] Dean cannot cast a vote (attempt returns 403).
-- [ ] Duplicate vote attempts return 409 (or idempotent — pick one, ADR it).
-- [ ] Polls close on their end time; results are viewable by premium users; free users see "UNLOCK" affordance.
+- [ ] All 6 new Drizzle schemas created and migrated to Neon.
+- [ ] MongoDB client and proposal schema created.
+- [ ] `computeVotingPower` unit-tested at every bracket boundary.
+- [ ] `castVote` integration-tested: happy path, super-admin block (403), duplicate vote (409), closed poll (400).
+- [ ] `awardPoint` integration-tested: first award (true), duplicate (false), user's `contribution_points` incremented.
+- [ ] `tallyPoll` integration-tested: weighted totals correct, tiebreak by `createdAt`.
+- [ ] Admin can create episodes, create polls, add options, close polls.
+- [ ] Public users can vote on open polls.
+- [ ] Premium users can see results; free users see "UNLOCK."
+- [ ] Dean cannot vote (403).
+- [ ] End-to-end: create poll → vote → close → tally → point awarded.
 - [ ] Test coverage ≥90% on `src/lib/voting.ts` and `src/lib/points.ts`.
+- [ ] ADRs 0029–0032 written.
 
 ---
 
@@ -686,17 +1824,34 @@ Any time a secret is exposed (pasted in chat, committed accidentally, etc.): rot
 
 ---
 
-## 12. Handoff checklist (Opus → Sonnet)
+## 12. Handoff checklist (Opus → executing model)
 
-Before Sonnet begins executing this plan, it must:
+This plan is designed to be followed by any capable model (Sonnet, Gemini Pro, etc.) without requiring architectural judgment. Every decision has been made. Every file path is specified. Every validation step is explicit.
 
-- [ ] Read all seven docs listed in §0.
-- [ ] Read this full plan.
-- [ ] Run `npm run build` to confirm a clean starting state.
-- [ ] Run `npm run test:unit` to confirm all tests pass.
-- [ ] Confirm with the user where in the plan to start (Phase 1 is the expected entry point).
+### Before starting execution, the model must:
 
-**If any `npm` command fails on the clean starting state, stop and ask the user before proceeding.** A broken starting state means the plan was captured against a different state than exists — investigate before "fixing."
+- [ ] Read `AGENTS.md` (the orientation file)
+- [ ] Read all seven docs listed in §0 (show-premise, identity-model, roles-and-ranks, decision-log, glossary, testing-strategy, build-plan)
+- [ ] Run `npm run build` to confirm a clean starting state
+- [ ] Run `npm run test:unit` to confirm all 8 tests pass
+- [ ] Confirm with the user where in the plan to start (Phase 1 is the expected entry point)
+
+### Exact prompt to paste when switching models:
+
+> Read `AGENTS.md`, all 7 docs in `/docs/` (especially `docs/build-plan.md` — this is the master execution plan), and confirm the project builds and tests pass. Then start executing from Phase 1. Follow the build plan task by task, commit after each task with a descriptive message. If you encounter a decision not covered by the plan or the docs, stop and ask me — do not guess.
+
+### Rules for the executing model:
+
+1. **Follow the plan.** Do not improvise architecture. The plan has been validated by Opus against the actual codebase and all 7 foundation docs.
+2. **One task at a time.** Complete a task, verify its acceptance criteria, commit, then move to the next.
+3. **Read Next.js 16 docs before writing Next.js code.** The docs live in `node_modules/next/dist/docs/01-app/`. Training data is likely wrong.
+4. **Write ADRs as specified.** The plan tells you when and what to write. Follow the template at the bottom of `docs/decision-log.md`.
+5. **TDD for critical paths.** Write the test first; see it fail; then write the implementation. This is non-negotiable for voting, points, and permissions.
+6. **When uncertain, ask.** One question now saves five bugs later.
+
+### If any `npm` command fails on the clean starting state:
+
+**Stop and ask the user before proceeding.** A broken starting state means something changed after this plan was written. Do not attempt to "fix" it without understanding what happened.
 
 ---
 

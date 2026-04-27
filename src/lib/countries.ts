@@ -199,3 +199,12 @@ export const countries: { code: string; name: string }[] = [
   { code: "ZM", name: "Zambia" },
   { code: "ZW", name: "Zimbabwe" },
 ];
+
+/**
+ * Returns true if the given code is in our country list.
+ * Used by the onboarding server action to reject form-injection attempts.
+ * Mirrors `isKnownTimezone` in src/lib/timezones.ts.
+ */
+export function isKnownCountryCode(code: string): boolean {
+  return countries.some((c) => c.code === code);
+}

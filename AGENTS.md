@@ -43,6 +43,7 @@ Companion platform for the YouTube series **"Ripped or Stamped"** — viewers si
 
 ## Collaboration norms
 
+- **One step = one commit.** When a step in a multi-step task is verified green (type-check, tests, build), generate a commit title and description for the user to review. The user runs the commit. See `docs/build-plan.md` §1.3 for full commit discipline.
 - **Docs first, code second.** New features start with a spec in `/docs`, reviewed and merged, *then* implemented.
 - **TDD for critical paths:** auth, permissions, voting, rank math, payments. Write the failing test first. See `docs/build-plan.md` §1.9 for the **mandatory test registry** — ~32 tests that must exist, each guarding a catastrophic failure mode. Do not skip them. Do not defer them. Write them in the phase where the feature is built.
 - **Typed env vars at boot.** Never `process.env.X` scattered through the code. Import from the central, Zod-validated `env` module.

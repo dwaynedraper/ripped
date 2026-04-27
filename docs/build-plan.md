@@ -67,11 +67,12 @@ For everything else (UI, CMS admin forms, content pages), tests are still requir
 
 ### 1.3 Commit discipline
 
+- **One step = one commit.** When a step in a multi-step task is complete and verified (type-check, tests, build green), generate a commit title and description for the user to review. The user runs the actual commit. **Do not bundle multiple unrelated steps into one commit** — small, focused commits are easier to review, revert, and debug.
 - **Never** commit with `--no-verify`.
 - **Never** amend a committed commit unless explicitly asked.
-- Commit messages: one short sentence, present tense, explaining *why*.
+- Commit messages: short title in imperative mood, body explains *why* (not *what* — the diff shows the what).
 - If a pre-commit hook fails, **fix the underlying issue**. Do not skip.
-- Co-author line on every commit per the project convention.
+- Co-author line on every commit per the project convention. Use the actual model attribution (e.g., `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`).
 
 ### 1.4 When to write an ADR
 
@@ -119,18 +120,18 @@ The executing model must write these tests **in the phase where the feature is b
 
 #### Auth & permissions (~10 tests) — Phase 3
 
-**File:** `src/__tests__/lib/auth.test.ts`
+**File:** `src/__tests__/lib/onboarding.test.ts` *(written in Phase 2 — see Task 2.3 file inventory)*
 
 ```typescript
 import { describe, it, expect } from "vitest";
-import { isProfileComplete } from "@/lib/auth";
+import { isProfileComplete } from "@/lib/onboarding";
 
 const base = {
   displayName: "TestUser",
   countryCode: "US",
-  cityId: 1,
+  cityName: "New York",
   timezone: "America/New_York",
-} as any;
+};
 
 describe("isProfileComplete", () => {
   it("returns true when all four fields are set", () => {
@@ -142,19 +143,25 @@ describe("isProfileComplete", () => {
   it("returns false when countryCode is null", () => {
     expect(isProfileComplete({ ...base, countryCode: null })).toBe(false);
   });
-  it("returns false when cityId is null", () => {
-    expect(isProfileComplete({ ...base, cityId: null })).toBe(false);
+  it("returns false when cityName is null", () => {
+    expect(isProfileComplete({ ...base, cityName: null })).toBe(false);
   });
   it("returns false when timezone is null", () => {
     expect(isProfileComplete({ ...base, timezone: null })).toBe(false);
   });
   it("returns false when all four are null", () => {
     expect(
-      isProfileComplete({ ...base, displayName: null, countryCode: null, cityId: null, timezone: null })
+      isProfileComplete({ displayName: null, countryCode: null, cityName: null, timezone: null })
     ).toBe(false);
+  });
+  // Empty-string defense (added beyond §1.9 minimum — see ADR-0023 rationale)
+  it("returns false when displayName is empty string", () => {
+    expect(isProfileComplete({ ...base, displayName: "" })).toBe(false);
   });
 });
 ```
+
+> *Field names updated post-ADR-0025 (the schema now stores `cityName` text, not `cityId` FK). The auth.test.ts file is deferred to Phase 3 and will cover the actual `requireRole` / `currentStaffUser` helpers — those don't exist yet.*
 
 **File:** `src/__tests__/lib/permissions.test.ts`
 

@@ -20,11 +20,13 @@
   "dependencies": {
     "@clerk/nextjs": "^7.2.5",
     "@googlemaps/js-api-loader": "^2.0.2",
+    "@hookform/resolvers": "^5.2.2",
     "@neondatabase/serverless": "^1.1.0",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-hook-form": "^7.74.0",
     "server-only": "^0.0.1",
     "svix": "^1.92.2",
     "ws": "^8.20.0",

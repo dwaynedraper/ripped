@@ -2,9 +2,11 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { auditEvents, users } from "@/db/schema";
+import { ONBOARDED_COOKIE } from "@/lib/onboarded-cookie";
 import {
   onboardingSchema,
   type OnboardingFieldErrors,
@@ -92,6 +94,19 @@ export async function completeOnboarding(
     }
     throw error;
   }
+
+  // Set the optimistic-onboarded cookie before redirecting. The proxy reads
+  // this on subsequent requests to skip the DB completeness check. Value is
+  // the clerkUserId so a different user signing into the same browser causes
+  // a mismatch and a fresh /onboarding redirect rather than a silent bypass.
+  const cookieStore = await cookies();
+  cookieStore.set(ONBOARDED_COOKIE, userId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365, // 1 year
+  });
 
   // redirect() throws — must be outside the try/catch so the redirect
   // exception isn't swallowed.

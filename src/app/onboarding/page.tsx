@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { isProfileComplete } from "@/lib/onboarding";
+import { OnboardingForm } from "./form";
 
 /**
  * Onboarding page — Phase 2 of sign-up (see ADR-0023).
@@ -53,14 +54,16 @@ export default async function OnboardingPage() {
     redirect("/");
   }
 
-  // TODO (Step 4): replace placeholder with <OnboardingForm />.
   return (
     <main className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-100 p-6">
-      <div className="max-w-md text-center space-y-4">
-        <h1 className="text-2xl font-semibold">Welcome.</h1>
-        <p className="text-zinc-400">
-          The onboarding form will appear here in the next step.
-        </p>
+      <div className="w-full max-w-md space-y-6">
+        <header className="space-y-2">
+          <h1 className="text-2xl font-semibold">Welcome.</h1>
+          <p className="text-sm text-zinc-400">
+            A few details before we let you in.
+          </p>
+        </header>
+        <OnboardingForm />
       </div>
     </main>
   );

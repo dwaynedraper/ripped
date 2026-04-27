@@ -12,7 +12,6 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { cities } from "./cities";
 import { staffRoleEnum, subscriptionTierEnum } from "./enums";
 
 // citext is a Postgres extension for case-insensitive text.
@@ -47,7 +46,11 @@ export const users = pgTable(
     // ── Geography (collected at sign-up with explanatory notice) ───────────
     // Nullable until onboarding is complete — see ADR-0023.
     countryCode: char("country_code", { length: 2 }),
-    cityId: integer("city_id").references(() => cities.id),
+    // City via Google Places Autocomplete — see ADR-0025.
+    // Replaces the old city_id FK to the cities table.
+    cityName: text("city_name"),
+    cityState: text("city_state"),
+    googlePlaceId: text("google_place_id"),
     timezone: text("timezone"),
 
     // ── Rank axes (strictly non-mingling — see ADR-0019) ───────────────────

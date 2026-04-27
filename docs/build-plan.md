@@ -458,16 +458,14 @@ Complete the two-phase sign-up flow (per ADR-0023):
 
 - **Sign-in / sign-up UI:** use Clerk's hosted `<SignIn />` and `<SignUp />` components. Do not build custom forms for auth.
 - **Onboarding UI:** custom form built by us (React Hook Form + Zod for validation).
-- **Form fields at onboarding** (all required):
+- **Form fields at onboarding** (all required except city_state):
   - Display name (text; unique; 3–30 chars; alphanumeric + underscore + hyphen + space)
-  - Country (searchable select from ISO 3166-1 alpha-2 list)
-  - City (searchable select filtered by country; pulls from the `cities` table)
+  - Country (select from ISO 3166-1 alpha-2 list; USA is default; rest alphabetical by name)
+  - City (Google Places Autocomplete, restricted to `(cities)` type, biased toward selected country — see ADR-0025)
   - Timezone (searchable select from IANA timezone list, with a suggested default based on the user's browser locale)
 - **Data-collection notice on onboarding form:** mandatory per identity-model.md §4.0. Display the exact copy from that section near the country/city fields.
-- **What if the user's city isn't listed?** v1: a small "my city isn't listed" link that opens a mailto or feedback form. Do not allow free-text cities.
-- **Cities seed:** start with ~300 cities — the largest cities in countries where the audience is likely to live (US, Canada, UK, Australia, New Zealand, Germany, France, Japan, rest: capital cities only). Source: [simplemaps.com world cities basic free](https://simplemaps.com/data/world-cities) (license allows free use with attribution). Seed script runs once via `npm run db:seed`.
 - **Timezone default:** populate from `Intl.DateTimeFormat().resolvedOptions().timeZone` on the client. User can override.
-- **Profile completeness check:** a user row is "complete" when all four onboarding fields are non-null. This is the check the proxy uses.
+- **Profile completeness check:** a user row is "complete" when `displayName`, `countryCode`, `cityName`, `googlePlaceId`, and `timezone` are all non-null. This is the check the proxy uses.
 
 ### 4.4 File inventory
 
@@ -480,21 +478,28 @@ Complete the two-phase sign-up flow (per ADR-0023):
 | `src/app/onboarding/page.tsx` | Onboarding form (client component using server action) |
 | `src/app/onboarding/actions.ts` | Server action that validates + writes the onboarding data |
 | `src/app/onboarding/form.tsx` | Client Component containing the form (separates client concerns) |
-| `src/lib/countries.ts` | Static list of ISO country codes + display names |
+| `src/components/city-autocomplete.tsx` | Google Places Autocomplete for city selection |
+| `src/lib/countries.ts` | Static list of ISO country codes + display names (USA first) |
 | `src/lib/timezones.ts` | Static list of IANA timezones |
 | `src/lib/onboarding.ts` | Helper: `isProfileComplete(user: User): boolean` |
-| `scripts/seed-cities.ts` | One-time cities seed script |
 | `src/__tests__/onboarding/actions.test.ts` | Unit test for the server action's validation |
 | `tests/e2e/sign-up.spec.ts` | Playwright E2E: sign up → onboarding → app |
+
+#### Delete
+
+| Path | Reason |
+|---|---|
+| `src/db/schema/cities.ts` | Replaced by Google Places — see ADR-0025 |
 
 #### Modify
 
 | Path | Change |
 |---|---|
+| `src/db/schema/users.ts` | Drop `city_id`, add `city_name`, `city_state`, `google_place_id` |
+| `src/db/schema/index.ts` | Remove `export * from "./cities"` |
 | `src/proxy.ts` | Add onboarding-completion check → redirect incomplete users to `/onboarding` |
 | `src/app/page.tsx` | Temporary home page that shows sign-in state (for Phase 2 validation — will be replaced in later phases) |
-| `package.json` | Add `db:seed` script |
-| `.env.example` | Document `SUPER_ADMIN_EMAIL` env var (used in Phase 3 — add now so the pattern is set) |
+| `.env.example` | Add `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`; add `SUPER_ADMIN_EMAIL` (used in Phase 3) |
 
 ### 4.5 Tasks
 
@@ -521,45 +526,62 @@ Complete the two-phase sign-up flow (per ADR-0023):
 
 **Acceptance:** visit `/sign-in` locally — Clerk's hosted UI renders. Create a test account — you are redirected to `/onboarding` (which doesn't exist yet — 404 is expected here, fix in Task 2.3).
 
-#### Task 2.2 — Seed the cities table
+#### Task 2.2 — Google Places Autocomplete setup + schema migration
 
-1. Download the world-cities CSV from simplemaps.com (free/basic tier). Filter to ~300 cities as described in §4.3.
-2. Place the curated CSV at `scripts/data/cities.csv`. Columns: `name,country_code`.
-3. Create `scripts/seed-cities.ts`:
-   - Loads env via `@next/env`
-   - Reads the CSV
-   - Inserts rows via Drizzle using `onConflictDoNothing()` on `name + country_code` (add a unique composite index in a migration if needed — check first, probably fine without since we only seed once)
-4. Add to `package.json`: `"db:seed": "tsx scripts/seed-cities.ts"`
-5. Install tsx as dev dep if not present: `npm install -D tsx`.
-6. Run `npm run db:seed` — verify `SELECT COUNT(*) FROM cities;` returns ~300.
+**Supersedes the old Task 2.2 (cities seed). See ADR-0025.**
 
-**Acceptance:** cities table populated; running the script a second time is idempotent.
+1. **Install:** `npm install @googlemaps/js-api-loader` (runtime dep; types come from `@types/google.maps` as dev dep).
+2. **User provides:** a Google Cloud API key with Places API (New) enabled.
+3. **Add to `.env.local` and `.env.example`:**
+   ```
+   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_key_here
+   ```
+4. **Schema change — `src/db/schema/users.ts`:**
+   - Drop `cityId` (integer FK → cities)
+   - Add `cityName` (text), `cityState` (text), `googlePlaceId` (text)
+   - Remove the `cities` import
+5. **Delete `src/db/schema/cities.ts`.**
+6. **Update `src/db/schema/index.ts`** — remove `export * from "./cities"`.
+7. **Run `npm run db:generate`** — creates migration SQL to drop the cities table and alter users.
+8. **Review the generated SQL.** It should:
+   - `DROP TABLE cities;`
+   - `ALTER TABLE users DROP COLUMN city_id;`
+   - `ALTER TABLE users ADD COLUMN city_name text;`
+   - `ALTER TABLE users ADD COLUMN city_state text;`
+   - `ALTER TABLE users ADD COLUMN google_place_id text;`
+9. **Run `npm run db:migrate`** — applies to Neon.
+10. **Create `src/components/city-autocomplete.tsx`** — a Client Component that:
+    - Loads Google Places via `@googlemaps/js-api-loader`
+    - Restricts to `(cities)` type
+    - Uses `componentRestrictions` to bias toward the selected country
+    - On selection: extracts `cityName`, `cityState`, `countryCode`, `googlePlaceId` from `address_components`
+    - Passes structured data to the parent form via an `onSelect` callback
+11. **Create `src/lib/countries.ts`** — static list of ISO 3166-1 alpha-2 countries. USA first, then alphabetical by display name.
+
+**Acceptance:** The city-autocomplete component renders, loads Google Places, shows suggestions as you type, and returns structured city data on selection.
 
 #### Task 2.3 — Build the onboarding form
 
-1. `src/lib/countries.ts`: export `countries: { code: string; name: string }[]` — use the ISO 3166-1 alpha-2 list (can hardcode or use a small npm package like `i18n-iso-countries`; hardcoding is fine for v1).
-2. `src/lib/timezones.ts`: export `timezones: string[]` — use `Intl.supportedValuesOf('timeZone')` at runtime, but precompute at build time for SSR. Simplest: hardcode a list of common IANA timezones (~60 entries for major cities). Can use `Intl.supportedValuesOf('timeZone')` if it simplifies.
-3. `src/app/onboarding/form.tsx` — Client Component:
+1. `src/lib/timezones.ts`: export `timezones: string[]` — use `Intl.supportedValuesOf('timeZone')` at runtime, but precompute at build time for SSR. Simplest: hardcode a list of common IANA timezones (~60 entries for major cities). Can use `Intl.supportedValuesOf('timeZone')` if it simplifies.
+2. `src/app/onboarding/form.tsx` — Client Component:
    - React Hook Form + Zod resolver
-   - Fields: `displayName`, `countryCode`, `cityId`, `timezone`
-   - Country select: filters cities dropdown
-   - City select: populated from an API route `/api/cities?country=XX` OR passed in as props after Server Component fetches them (prefer the latter — less client state)
+   - Fields: `displayName`, `countryCode` (select, USA default), city (via `<CityAutocomplete />`), `timezone`
+   - Country select: biases city autocomplete results (when country changes, the autocomplete reloads with the new country restriction)
    - Timezone select: default from `Intl.DateTimeFormat().resolvedOptions().timeZone`
    - Submit: calls server action from `actions.ts`
    - Displays the identity-model.md §4.0 data-collection notice near country/city fields
-4. `src/app/onboarding/actions.ts` — Server Action `completeOnboarding`:
-   - Zod validate input
+3. `src/app/onboarding/actions.ts` — Server Action `completeOnboarding`:
+   - Zod validate input (displayName, countryCode, cityName, cityState, googlePlaceId, timezone)
    - Get `clerk_user_id` from Clerk's `auth()`
-   - Update the `users` row with the four fields
+   - Update the `users` row with the onboarding fields
    - Insert an `audit_events` row with `event_type: 'profile.onboarded'`
    - Redirect to `/` on success
-5. `src/app/onboarding/page.tsx` — Server Component:
+4. `src/app/onboarding/page.tsx` — Server Component:
    - Auth check via `auth()` — redirect to `/sign-in` if not authenticated
    - Fetch user row; if already complete, redirect to `/`
-   - Fetch cities (all, filterable on client) — pass as props to `<OnboardingForm />`
-   - Render form
+   - Render the `<OnboardingForm />`
 
-**Acceptance:** signing up via Clerk redirects to `/onboarding`; submitting the form populates the four fields in Neon and redirects to `/`.
+**Acceptance:** signing up via Clerk redirects to `/onboarding`; submitting the form populates the fields in Neon and redirects to `/`.
 
 #### Task 2.4 — Proxy: gate incomplete profiles
 
@@ -591,13 +613,13 @@ Follow the test pyramid in [`docs/testing-strategy.md`](./testing-strategy.md).
 ### 4.7 ADRs to write during this phase
 
 - **ADR-0024 — Onboarding form uses React Hook Form + Zod.** Record the choice vs. alternatives (uncontrolled HTML form + Server Action only, Formik, etc.). Reason: RHF is well-documented, Zod integrates with our validation patterns, and the form has enough client-side logic (dependent city dropdown) to warrant it.
-- **ADR-0025 — City list is curated (~300 cities), not user-submittable.** Confirms ADR-0013's "curated city list, not free text." Adds the seed source and update process.
+- **ADR-0025 — City selection via Google Places Autocomplete.** Documents the decision to use Google Places instead of a curated cities table. See `decision-log.md`.
 
 ### 4.8 Definition of done for Phase 2
 
 - [ ] `/sign-in` and `/sign-up` render Clerk's hosted UI.
-- [ ] Cities table seeded with ~300 rows.
-- [ ] `/onboarding` collects the four fields with the data-collection notice visible.
+- [ ] Google Places Autocomplete works in the onboarding form — typing shows city suggestions.
+- [ ] `/onboarding` collects display name, country, city (via Google Places), and timezone with the data-collection notice visible.
 - [ ] Server action persists the fields; `audit_events` row written for each completion.
 - [ ] Proxy redirects incomplete profiles to `/onboarding`.
 - [ ] Unit tests passing. E2E sign-up test passing against the deployed URL.

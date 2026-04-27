@@ -110,7 +110,9 @@ The fields below are the *complete* set stored for a standard user. No other fie
 | `email` | string | yes | no | Clerk → mirrored to Postgres | Login. Account recovery. Receipts if they ever purchase. Never displayed. |
 | `display_name` | string (**unique**, citext) | yes | yes | Postgres | Public-facing name. Also serves as the voter handle shown next to votes. Enforced unique case-insensitively across all users. |
 | `country_code` | ISO 3166-1 alpha-2 | yes | only on public profile | Postgres | Audience geography at country level. Structured so dashboards are trivial. Collected at sign-up with an explanatory note (see §4.0). |
-| `city_id` | FK → `cities` | yes | only on public profile | Postgres | Audience geography at city level. Curated list; no free text. Collected at sign-up with an explanatory note (see §4.0). |
+| `city_name` | text | yes | only on public profile | Postgres | City display name from Google Places Autocomplete, e.g. "Dallas". Collected at sign-up with an explanatory note (see §4.0). See ADR-0025. |
+| `city_state` | text (nullable) | no | only on public profile | Postgres | State/province from Google Places, e.g. "Texas". Null for countries without states. |
+| `google_place_id` | text | yes | no | Postgres | Google Places unique identifier. Enables deduplication and future map features. |
 | `timezone` | IANA TZ string | yes | no | Postgres | Lets us schedule/analyze in the user's local time. |
 | `subscription_tier` | enum: `free`, `premium` | yes | no | Postgres | Gates premium content. Changed by purchase or admin action. |
 | `contribution_points` | integer (≥ 0, monotonic) | yes | yes (as a badge / derived level) | Postgres | Earned rank. Accrues on meaningful user interactions (vote cast, download, etc.). **Only ever increases** — no loss, no demotion. Affects voting power and per-feature point guards. **Does not affect content unlocks** — those are tier-gated only. |

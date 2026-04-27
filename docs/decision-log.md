@@ -575,7 +575,37 @@ The four onboarding fields are **nullable in Postgres** to allow the partial row
 
 ---
 
+## ADR-0025 — City selection via Google Places Autocomplete (replaces curated cities table)
+
+- **Date:** 2026-04-25
+- **Status:** accepted
+- **Amends:** ADR-0013 (the "curated list" aspect — the data-collection notice requirement remains)
+
+**Context.** The original plan called for a curated `cities` table (~300 cities) seeded from a CSV. During Phase 2 implementation, the user determined that 300 cities is too limiting for a global audience. The city field exists for audience geography analytics — restricting users to a small list harms data quality and user experience.
+
+**Decision.** Use Google Places Autocomplete (restricted to `(cities)` type) for city selection during onboarding. The country select biases autocomplete results. On selection, we store `city_name` (text), `city_state` (text, nullable), and `google_place_id` (text) directly on the `users` table. The `cities` table and `city_id` FK are dropped.
+
+**Schema change:**
+- Dropped: `cities` table, `users.city_id` FK
+- Added: `users.city_name`, `users.city_state`, `users.google_place_id`
+
+**Consequences.**
+- (+) Every city on Earth is available — no user is excluded.
+- (+) Fuzzy matching handles typos and partial input.
+- (+) `google_place_id` enables future deduplication and map visualizations.
+- (+) Simpler schema — no FK join needed for display.
+- (−) External API dependency at onboarding time. If Google Places is down, the field is unusable. Acceptable — outages are rare and short-lived.
+- (−) Requires a Google Cloud API key and has a cost ceiling ($200/month free credit ≈ ~28,500 requests). At current projected volume, cost is effectively zero.
+
+**Alternatives considered.**
+- **Curated cities table (~300 cities from CSV)** — Too limiting. Users from unlisted cities either pick the wrong city or bounce.
+- **GeoNames dataset (~25,000 cities loaded into Postgres)** — Good quality, free, but less fuzzy matching and no typo tolerance. Would require maintaining the dataset.
+- **Mapbox Geocoding API** — Good quality, 100k free requests/month, but slightly less polished for city-only searches than Google Places.
+
+---
+
 ## Template for new ADRs
+
 
 ```markdown
 ## ADR-00NN — <title>

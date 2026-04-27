@@ -22,12 +22,23 @@ const schema = z.object({
   CLERK_SECRET_KEY: z.string().min(1),
   CLERK_WEBHOOK_SECRET: z.string().min(1),
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1),
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL: z.string().startsWith("/", {
+    message: "Must be a relative path starting with /",
+  }),
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL: z.string().startsWith("/", {
+    message: "Must be a relative path starting with /",
+  }),
   NEXT_PUBLIC_APP_URL: z
     .string()
     .url()
     .refine((u) => u.startsWith("http://") || u.startsWith("https://"), {
       message: "Must use http or https protocol",
     }),
+
+  // Google Maps (Places Autocomplete — see ADR-0025)
+  // Read from Client Components via process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.
+  // Validated here so a missing key fails the build, not the user's first city search.
+  NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: z.string().min(1),
 });
 
 export type Env = z.infer<typeof schema>;

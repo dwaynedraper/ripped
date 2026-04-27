@@ -17,12 +17,19 @@ const serverSchema = z.object({
 
 const clientSchema = z.object({
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1),
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL: z.string().startsWith("/", {
+    message: "Must be a relative path starting with /",
+  }),
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL: z.string().startsWith("/", {
+    message: "Must be a relative path starting with /",
+  }),
   NEXT_PUBLIC_APP_URL: z
     .string()
     .url()
     .refine((u) => u.startsWith("http://") || u.startsWith("https://"), {
       message: "Must use http or https protocol",
     }),
+  NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: z.string().min(1),
 });
 
 const validServer = {
@@ -36,7 +43,10 @@ const validServer = {
 
 const validClient = {
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_abc",
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/sign-in",
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/sign-up",
   NEXT_PUBLIC_APP_URL: "http://localhost:3000",
+  NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: "AIza_test_abc",
 };
 
 describe("server env schema", () => {
@@ -91,6 +101,24 @@ describe("client env schema", () => {
     const result = clientSchema.safeParse({
       ...validClient,
       NEXT_PUBLIC_APP_URL: "ftp://example.com",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // Guards the silent-failure mode: without this key the city autocomplete
+  // mounts but never renders suggestions, leaving the user stuck on onboarding.
+  it("rejects a missing Google Maps API key", () => {
+    const result = clientSchema.safeParse({
+      ...validClient,
+      NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a Clerk sign-in URL that is not a relative path", () => {
+    const result = clientSchema.safeParse({
+      ...validClient,
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: "sign-in",
     });
     expect(result.success).toBe(false);
   });

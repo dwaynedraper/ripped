@@ -87,7 +87,7 @@ export async function completeOnboarding(
         },
       };
     }
-    if (isDisplayNameConflict(error)) {
+    if (isUniqueViolation(error, "users_display_name_unique")) {
       return {
         success: false,
         errors: { displayName: "This display name is already taken" },
@@ -117,18 +117,6 @@ export async function completeOnboarding(
 // ─── Internals ────────────────────────────────────────────────────────────────
 
 class MissingUserRowError extends Error {}
-
-/**
- * Detects Postgres unique-constraint violations on `users_display_name_unique`.
- * The error shape comes from @neondatabase/serverless (which mirrors `pg`):
- * - `code` is SQLSTATE; '23505' = unique_violation.
- * - `constraint` is the name of the violated constraint.
- */
-function isDisplayNameConflict(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const err = error as { code?: unknown; constraint?: unknown };
-  return err.code === "23505" && err.constraint === "users_display_name_unique";
-}
 
 /**
  * Zod's flatten() returns `{ field: string[] | undefined }`. Our form renders

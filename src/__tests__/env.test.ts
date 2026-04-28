@@ -30,6 +30,7 @@ const clientSchema = z.object({
       message: "Must use http or https protocol",
     }),
   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: z.string().min(1),
+  NEXT_PUBLIC_E2E_TEST_MODE: z.enum(["0", "1"]).default("0"),
 });
 
 const validServer = {
@@ -119,6 +120,24 @@ describe("client env schema", () => {
     const result = clientSchema.safeParse({
       ...validClient,
       NEXT_PUBLIC_CLERK_SIGN_IN_URL: "sign-in",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("defaults E2E_TEST_MODE to '0' when omitted (production safety)", () => {
+    // Catastrophe mode: a forgotten env var enables test mode in production.
+    // The default keeps the flag off when the var is missing.
+    const result = clientSchema.safeParse(validClient);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.NEXT_PUBLIC_E2E_TEST_MODE).toBe("0");
+  });
+
+  it("rejects E2E_TEST_MODE values other than '0' or '1'", () => {
+    // Without the enum constraint, any string would be accepted and the
+    // truthy/falsy check at the call site would silently flip behavior.
+    const result = clientSchema.safeParse({
+      ...validClient,
+      NEXT_PUBLIC_E2E_TEST_MODE: "true",
     });
     expect(result.success).toBe(false);
   });

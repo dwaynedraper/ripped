@@ -604,6 +604,43 @@ The four onboarding fields are **nullable in Postgres** to allow the partial row
 
 ---
 
+## ADR-0026 — E2E testing uses programmatic Clerk auth and an env-flagged bypass for Google Places
+
+- **Date:** 2026-04-28
+- **Status:** accepted
+
+**Context.** The original `tests/e2e/sign-up.spec.ts` drove Clerk's hosted sign-up UI directly with Playwright. It failed in three compounding ways: Clerk's bot protection rejected the automated input, Clerk's UI selectors and multi-step flow shifted between versions, and the form's `<CityAutocomplete />` made network calls to Google Places that test runs couldn't reliably satisfy. Three browsers running in parallel against `npm run dev` also crashed Turbopack's async-hook tracking ("Map maximum size exceeded"). The test was marked `.fixme()` pending a real strategy.
+
+Clerk's official guidance is to use `@clerk/testing` for Playwright tests rather than driving the hosted UI. Two questions remained: whether to use a persistent test user or create fresh users per test, and how to handle the Google Places dependency.
+
+**Decision.**
+
+**Auth.** Use `@clerk/testing/playwright`. The package's `clerkSetup()` global setup fetches a short-lived testing token from Clerk's backend using the existing `CLERK_SECRET_KEY` (no manual dashboard configuration). Per-test, `setupClerkTestingToken({ page })` adds a header that bypasses bot protection, and `clerk.signIn({ page, signInParams })` programmatically authenticates the browser without driving Clerk's UI.
+
+**Test users.** Create fresh users per test via Clerk's backend API (`clerkClient.users.createUser`). The fixture also inserts the matching row in our `users` table directly (the Clerk webhook can't reach `localhost`, so we bypass the webhook in tests). After each test, the fixture deletes the Clerk user and the DB row. State is fully isolated per run; no cross-test pollution.
+
+**Google Places.** Add a `NEXT_PUBLIC_E2E_TEST_MODE` env var, defaulting to `"0"`. When set to `"1"`, `<CityAutocomplete />` skips the Google Places loader and accepts plain typed text plus a "Use this city" button that fires the `onSelect` callback with a stub place result. The flag is set to `"1"` only in `playwright.config.ts`'s `webServer` block.
+
+**Workers.** E2E tests run with `workers: 1` regardless of CI status. Each test creates a Clerk user via the API; parallel workers would race on Clerk's rate limits. Sequential runs add seconds, not minutes, at our test count.
+
+**Consequences.**
+- (+) Tests don't drive Clerk's UI, so they survive Clerk version bumps and bot-protection changes.
+- (+) Fresh user per test means fully isolated state — no reset logic, no stale data, no parallelism races.
+- (+) No Google Maps network dependency in tests — runs offline, runs in CI without API keys.
+- (+) `clerkSetup()` auto-fetches the testing token; no manual dashboard configuration to keep in sync.
+- (−) Ships a single env-flag check into `<CityAutocomplete />` production code (~5 lines). Documented and tested; not invasive enough to justify network mocking instead.
+- (−) Doesn't test Clerk's hosted UI at all. Acceptable: Clerk's UI is Clerk's responsibility; we test the parts of the flow that are ours.
+- (−) Doesn't test the webhook → DB row creation path. Acceptable: that's covered (or will be) by an integration test that runs against a real webhook delivery, not E2E.
+- (−) Each test makes 2 Clerk API calls (create + delete). On Clerk's free tier this is fine but counts toward limits if test volume grows.
+
+**Alternatives considered.**
+- **Persistent test user with state reset between runs.** Faster (no API calls per test), but couples tests to a hand-created dashboard artifact and requires reset logic that itself can drift.
+- **Full Playwright network mocking of Google Places.** No production code change, but Google's Places API makes many requests with non-trivial response shapes — mocks become brittle and high-maintenance.
+- **`page.evaluate()` to call the form's `setValue` directly.** Hacky; couples the test to React internals; bypasses the actual user-interaction surface we want to validate.
+- **Driving Clerk's hosted UI with Playwright.** What we tried. Failed for the reasons listed in Context.
+
+---
+
 ## Template for new ADRs
 
 

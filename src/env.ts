@@ -39,6 +39,12 @@ const schema = z.object({
   // Read from Client Components via process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.
   // Validated here so a missing key fails the build, not the user's first city search.
   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: z.string().min(1),
+
+  // E2E test bypass for <CityAutocomplete /> — see ADR-0026.
+  // "1" disables the Google Places loader so Playwright tests can drive the
+  // form without a network round-trip. Defaults to "0" (off) so a forgotten
+  // env var stays safe in production. Only ever set to "1" by playwright.config.ts.
+  NEXT_PUBLIC_E2E_TEST_MODE: z.enum(["0", "1"]).default("0"),
 });
 
 export type Env = z.infer<typeof schema>;

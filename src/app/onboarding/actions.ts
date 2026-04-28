@@ -6,6 +6,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { auditEvents, users } from "@/db/schema";
+import { isUniqueViolation } from "@/lib/db-errors";
 import { ONBOARDED_COOKIE } from "@/lib/onboarded-cookie";
 import {
   onboardingSchema,

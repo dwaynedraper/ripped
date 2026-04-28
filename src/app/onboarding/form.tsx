@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, useTransition } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import {
   CityAutocomplete,
   type CityResult,
@@ -54,7 +54,13 @@ export function OnboardingForm() {
     }
   }, [form]);
 
-  const countryCode = form.watch("countryCode");
+  // useWatch (rather than form.watch) so React Compiler can memoize this
+  // component. form.watch returns a stale-prone function the compiler bails
+  // on; useWatch is RHF's purpose-built subscription hook.
+  const countryCode = useWatch({
+    control: form.control,
+    name: "countryCode",
+  });
 
   const handleCitySelect = (result: CityResult) => {
     form.setValue("cityName", result.cityName, { shouldValidate: true });

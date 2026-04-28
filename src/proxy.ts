@@ -1,6 +1,10 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { ONBOARDED_COOKIE } from "@/lib/onboarded-cookie";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { isProfileComplete } from "@/lib/onboarding";
 
 // Routes accessible without authentication.
 // The webhook endpoint must be public — Clerk POSTs before any session exists.
@@ -40,7 +44,27 @@ export default clerkMiddleware(async (auth, req) => {
   if (!isOnboardingExempt(req)) {
     const cookie = req.cookies.get(ONBOARDED_COOKIE);
     if (cookie?.value !== userId) {
-      return NextResponse.redirect(new URL("/onboarding", req.url));
+      // Optimistic check failed; verify authoritative state in DB.
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.clerkUserId, userId));
+
+      if (!user || !isProfileComplete(user)) {
+        return NextResponse.redirect(new URL("/onboarding", req.url));
+      }
+
+      // User is fully onboarded but the cookie was missing/invalid.
+      // Set the cookie now so subsequent requests can skip the DB query.
+      const res = NextResponse.next();
+      res.cookies.set(ONBOARDED_COOKIE, userId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 60 * 60 * 24 * 365, // 1 year
+      });
+      return res;
     }
   }
 });

@@ -1,4 +1,4 @@
-import { SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
+import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { db } from "@/db";
@@ -27,16 +27,14 @@ export default async function Home() {
           Ripped or Stamped
         </h1>
         
-        <SignedIn>
+        {userId ? (
           <div className="flex flex-col items-center gap-4 text-center">
             <p className="text-lg text-zinc-600 dark:text-zinc-400">
               Welcome back, <span className="font-semibold text-zinc-900 dark:text-zinc-100">{displayName || "User"}</span>!
             </p>
             <UserButton />
           </div>
-        </SignedIn>
-
-        <SignedOut>
+        ) : (
           <div className="flex flex-col gap-4 w-full sm:flex-row">
             <Link 
               href="/sign-in"
@@ -51,7 +49,7 @@ export default async function Home() {
               Sign Up
             </Link>
           </div>
-        </SignedOut>
+        )}
       </main>
     </div>
   );

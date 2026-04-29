@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 
+const isE2ETestMode =
+  process.env.NEXT_PUBLIC_E2E_TEST_MODE === "1";
+
 export type CityResult = {
   cityName: string;
   cityState: string | null;
@@ -76,6 +79,8 @@ export function CityAutocomplete({
   }, [countryCode, onSelect]);
 
   useEffect(() => {
+    if (isE2ETestMode) return;
+
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
     if (!apiKey || !inputRef.current) return;
 
@@ -111,6 +116,15 @@ export function CityAutocomplete({
     };
   }, [countryCode, handlePlaceSelect]);
 
+  const handleTestModeSelect = useCallback(() => {
+    onSelect({
+      cityName: inputValue,
+      cityState: null,
+      countryCode,
+      googlePlaceId: "test-place-id",
+    });
+  }, [inputValue, countryCode, onSelect]);
+
   return (
     <div>
       <label
@@ -119,16 +133,28 @@ export function CityAutocomplete({
       >
         City
       </label>
-      <input
-        ref={inputRef}
-        id="city-autocomplete"
-        type="text"
-        value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
-        placeholder="Start typing your city..."
-        autoComplete="off"
-        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-      />
+      <div className={isE2ETestMode ? "flex gap-2" : undefined}>
+        <input
+          ref={inputRef}
+          id="city-autocomplete"
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          placeholder="Start typing your city..."
+          autoComplete="off"
+          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        />
+        {isE2ETestMode && (
+          <button
+            type="button"
+            data-testid="city-use-this"
+            onClick={handleTestModeSelect}
+            className="shrink-0 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          >
+            Use this city
+          </button>
+        )}
+      </div>
       {error && (
         <p className="mt-1 text-sm text-red-400">{error}</p>
       )}

@@ -684,6 +684,52 @@ Clerk's official guidance is to use `@clerk/testing` for Playwright tests rather
 
 ---
 
+## ADR-0029 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var
+
+- **Date:** 2026-04-29
+- **Status:** accepted
+
+**Context.** The system needs exactly one super-admin. That person (Dean) must be promoted automatically on first sign-up without manual DB surgery — there is no existing admin to do it, and a seed script has a chicken-and-egg problem (the Clerk user must exist first).
+
+**Decision.** A new env var `SUPER_ADMIN_EMAIL` is checked on every `user.created` Clerk webhook. If the email matches AND no super-admin exists yet in the `users` table, the newly created user is promoted to `staff_role = 'super_admin'` and an `audit_events` row is written for `staff.super_admin_bootstrapped`. This mechanism is single-use: the guard `WHERE staff_role = 'super_admin' → count = 0` ensures it never fires again.
+
+**Consequences.**
+- (+) No manual intervention needed to bootstrap the first super-admin.
+- (+) Idempotent after the first sign-up — re-triggering is impossible.
+- (+) Fully audited: the `audit_events` row records the bootstrap permanently.
+- (−) `SUPER_ADMIN_EMAIL` is a high-value secret; if changed after bootstrap, a second sign-up with the new email would not be promoted (the count guard saves us), but the intent could be confused. Mitigated by documenting this in `.env.example`.
+
+**Alternatives considered.**
+- **Manual SQL** — error-prone, undocumented, impossible to audit after the fact.
+- **Seed script** — chicken-and-egg: Clerk user must exist before the script can reference `clerk_user_id`.
+- **Clerk Organizations** — overly complex for a single-operator setup.
+
+---
+
+## ADR-0030 — Staff invitations via Clerk's invitation API with role metadata
+
+- **Date:** 2026-04-29
+- **Status:** accepted
+
+**Context.** Staff (admins, content creators) must be invited — they cannot self-register as staff. We need a way to: (1) deliver an invitation email, (2) carry the intended staff role through to sign-up, and (3) record who invited whom.
+
+**Decision.** Use Clerk's invitation API (`clerkClient().invitations.createInvitation()`). The invitation carries `publicMetadata: { staffRole, invitedByUserId }`. When the invitee accepts and creates a Clerk account, our `user.created` webhook sees the `publicMetadata` and writes `staff_role`, `invited_by_user_id`, and `invited_at` to the `users` row. No parallel invitation tracking table is needed.
+
+*Permission rule:* admins may invite `content_creator` only; super-admins may invite `admin` or `content_creator`. This is enforced in the `sendInvitation` server action via `requireAdmin` / `requireSuperAdmin`.
+
+**Consequences.**
+- (+) No custom email infrastructure — Clerk sends the invite email with a magic link.
+- (+) Role propagation is automatic: metadata survives through Clerk's sign-up flow.
+- (+) Single source of truth — the invitation lifecycle lives in Clerk; only the outcome (accepted user's role) lives in our DB.
+- (−) If Clerk's invitation API changes, the metadata contract may need updating. Mitigated by the webhook handler being the only consumer.
+- (−) No way to list or revoke pending invitations from our own UI without calling Clerk's API. Acceptable for v1.
+
+**Alternatives considered.**
+- **Custom invitation table** — stores pending invitations in Postgres, emails via Resend/Postmark. More control, more infrastructure. Deferred to a later phase if needed.
+- **Manual admin promotion** — admin creates the Clerk user manually and we update the DB. No invitation email; poor UX; error-prone.
+
+---
+
 ## Template for new ADRs
 
 

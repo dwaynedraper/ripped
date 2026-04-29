@@ -13,6 +13,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["src/__tests__/setup.ts"],
+    // Integration tests share a real Neon DB — run files serially to avoid cross-test pollution.
+    fileParallelism: false,
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     exclude: ["node_modules", ".next", "tests/**"],
     coverage: {

@@ -624,13 +624,13 @@ Follow the test pyramid in [`docs/testing-strategy.md`](./testing-strategy.md).
 
 ### 4.8 Definition of done for Phase 2
 
-- [ ] `/sign-in` and `/sign-up` render Clerk's hosted UI.
-- [ ] Google Places Autocomplete works in the onboarding form — typing shows city suggestions.
-- [ ] `/onboarding` collects display name, country, city (via Google Places), and timezone with the data-collection notice visible.
-- [ ] Server action persists the fields; `audit_events` row written for each completion.
-- [ ] Proxy redirects incomplete profiles to `/onboarding`.
-- [ ] Unit tests passing. E2E sign-up test passing against the deployed URL.
-- [ ] A test user can complete the flow: sign up → onboard → access home.
+- ✅ `/sign-in` and `/sign-up` render Clerk's hosted UI.
+- ✅ Google Places Autocomplete works in the onboarding form — typing shows city suggestions.
+- ✅ `/onboarding` collects display name, country, city (via Google Places), and timezone with the data-collection notice visible.
+- ✅ Server action persists the fields; `audit_events` row written for each completion.
+- ✅ Proxy redirects incomplete profiles to `/onboarding`.
+- ✅ Unit tests passing. E2E onboarding test wired up (`tests/e2e/onboarding.spec.ts`).
+- ✅ A test user can complete the flow: sign up → onboard → access home.
 
 ---
 

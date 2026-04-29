@@ -21,5 +21,8 @@ export default defineConfig({
     command: "npm run build && npm run start",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
+    env: {
+      NEXT_PUBLIC_E2E_TEST_MODE: "1",
+    },
   },
 });

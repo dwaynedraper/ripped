@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // The env module validates at import time, so we test the validation logic
 // directly against the Zod schemas rather than re-importing the live module.

@@ -38,6 +38,7 @@ export function CityAutocomplete({
   error,
 }: CityAutocompleteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const placeContainerRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
 
   const handlePlaceSelect = useCallback(() => {
@@ -84,7 +85,7 @@ export function CityAutocomplete({
     if (isE2ETestMode) return;
 
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey || !inputRef.current) return;
+    if (!apiKey) return;
 
     let cleanup: (() => void) | undefined;
 
@@ -93,17 +94,102 @@ export function CityAutocomplete({
       v: "weekly",
     });
 
-    importLibrary("places").then(() => {
+    importLibrary("places").then(async () => {
+      const placesNs = google.maps.places as unknown as {
+        PlaceAutocompleteElement?: new (options?: unknown) => HTMLElement;
+      };
+      const PlaceAutocompleteElementCtor = placesNs.PlaceAutocompleteElement;
+
+      if (PlaceAutocompleteElementCtor && placeContainerRef.current) {
+        placeContainerRef.current.innerHTML = "";
+
+        const placeAutocomplete = new PlaceAutocompleteElementCtor({
+          includedRegionCodes: [countryCode.toLowerCase()],
+          includedPrimaryTypes: ["(cities)"],
+        }) as HTMLElement;
+
+        placeContainerRef.current.appendChild(placeAutocomplete);
+
+        const onPlaceSelect = async (event: Event) => {
+          const e = event as Event & {
+            place?: unknown;
+            detail?: {
+              place?: unknown;
+              placePrediction?: { toPlace?: () => unknown };
+            };
+          };
+
+          const toPlace =
+            e.detail?.placePrediction?.toPlace?.() ??
+            e.detail?.place ??
+            e.place;
+          if (!toPlace) return;
+
+          const place = toPlace as {
+            fetchFields?: (args: { fields: string[] }) => Promise<void>;
+            addressComponents?: Array<{
+              longText?: string;
+              shortText?: string;
+              types?: string[];
+            }>;
+            id?: string;
+            placeId?: string;
+            name?: string;
+            displayName?: { text?: string };
+          };
+
+          await place.fetchFields?.({
+            fields: ["addressComponents", "id", "displayName", "name"],
+          });
+
+          let cityName = "";
+          let cityState: string | null = null;
+          let placeCountryCode = "";
+
+          for (const component of place.addressComponents ?? []) {
+            const types = component.types ?? [];
+            if (types.includes("locality")) {
+              cityName = component.longText ?? "";
+            }
+            if (types.includes("administrative_area_level_1")) {
+              cityState = component.longText ?? null;
+            }
+            if (types.includes("country")) {
+              placeCountryCode = component.shortText ?? "";
+            }
+          }
+
+          const fallbackName = place.displayName?.text ?? place.name ?? "";
+          if (!cityName && fallbackName) {
+            cityName = fallbackName;
+          }
+
+          const placeId = place.id ?? place.placeId;
+          if (!cityName || !placeId) return;
+
+          onSelect({
+            cityName,
+            cityState,
+            countryCode: placeCountryCode || countryCode,
+            googlePlaceId: placeId,
+          });
+        };
+
+        placeAutocomplete.addEventListener("gmp-select", onPlaceSelect);
+        cleanup = () => {
+          placeAutocomplete.removeEventListener("gmp-select", onPlaceSelect);
+          placeContainerRef.current?.replaceChildren();
+        };
+        return;
+      }
+
       if (!inputRef.current) return;
 
-      const autocomplete = new google.maps.places.Autocomplete(
-        inputRef.current,
-        {
-          types: ["(cities)"],
-          componentRestrictions: { country: countryCode.toLowerCase() },
-          fields: ["address_components", "place_id", "name"],
-        },
-      );
+      const autocomplete = new google.maps.places.Autocomplete(inputRef.current, {
+        types: ["(cities)"],
+        componentRestrictions: { country: countryCode.toLowerCase() },
+        fields: ["address_components", "place_id", "name"],
+      });
 
       autocomplete.addListener("place_changed", handlePlaceSelect);
       autocompleteRef.current = autocomplete;
@@ -116,7 +202,7 @@ export function CityAutocomplete({
     return () => {
       cleanup?.();
     };
-  }, [countryCode, handlePlaceSelect]);
+  }, [countryCode, handlePlaceSelect, onSelect]);
 
   const handleTestModeSelect = useCallback(() => {
     onSelect({
@@ -136,15 +222,23 @@ export function CityAutocomplete({
         City
       </label>
       <div className={isE2ETestMode ? "flex gap-2" : undefined}>
-        <input
-          ref={inputRef}
-          id="city-autocomplete"
-          type="text"
-          defaultValue={defaultValue ?? ""}
-          placeholder="Start typing your city..."
-          autoComplete="off"
-          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        />
+        {isE2ETestMode ? (
+          <input
+            ref={inputRef}
+            id="city-autocomplete"
+            type="text"
+            defaultValue={defaultValue ?? ""}
+            placeholder="Start typing your city..."
+            autoComplete="off"
+            className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+        ) : (
+          <div
+            id="city-autocomplete"
+            ref={placeContainerRef}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2"
+          />
+        )}
         {isE2ETestMode && (
           <button
             type="button"

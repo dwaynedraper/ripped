@@ -95,6 +95,10 @@ export function CityAutocomplete({
     });
 
     importLibrary("places").then(async () => {
+      // Guard: google.maps.places may not be available if the library failed to
+      // initialise fully (e.g. test environments, network errors after load).
+      if (typeof google === "undefined" || !google.maps?.places) return;
+
       const placesNs = google.maps.places as unknown as {
         PlaceAutocompleteElement?: new (options?: unknown) => HTMLElement;
       };

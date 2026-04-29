@@ -14,6 +14,7 @@ const serverSchema = z.object({
   CLERK_SECRET_KEY: z.string().min(1),
   CLERK_WEBHOOK_SECRET: z.string().min(1),
   SUPER_ADMIN_EMAIL: z.string().email(),
+  ADMIN_HOSTNAME: z.string().min(1),
 });
 
 const clientSchema = z.object({
@@ -42,6 +43,7 @@ const validServer = {
   CLERK_SECRET_KEY: "sk_test_abc",
   CLERK_WEBHOOK_SECRET: "whsec_abc",
   SUPER_ADMIN_EMAIL: "dean@test.com",
+  ADMIN_HOSTNAME: "admin.localhost",
 };
 
 const validClient = {

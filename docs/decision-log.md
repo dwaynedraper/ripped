@@ -644,7 +644,7 @@ Clerk's official guidance is to use `@clerk/testing` for Playwright tests rather
 ## ADR-0027 — Admin routing via /admin/* paths (subdomain deferred)
 
 - **Date:** 2026-04-29
-- **Status:** accepted
+- **Status:** superseded by ADR-0028
 
 **Context.** ADR-0003 specifies subdomain-based admin routing (`admin.<domain>`). The project does not yet have a custom domain; Vercel's `.vercel.app` domains do not support arbitrary subdomains.
 
@@ -658,6 +658,29 @@ Clerk's official guidance is to use `@clerk/testing` for Playwright tests rather
 **Alternatives considered.**
 - **Wait for domain** — blocks progress on the entire admin surface indefinitely.
 - **Vercel rewrites** — no way to create a true subdomain on `.vercel.app`; rewrites don't help.
+
+---
+
+## ADR-0028 — Subdomain routing for admin surface implemented from the start
+
+- **Date:** 2026-04-29
+- **Status:** accepted
+- **Supersedes:** ADR-0027
+
+**Context.** ADR-0027 deferred subdomain routing because the project had no custom domain at the time Phase 3 was planned. By the time Phase 3 began, `rippedorstamped.com` was purchased, DNS was configured, and the domain was live on Vercel. The temporary deviation is unnecessary.
+
+**Decision.** Implement subdomain-based admin routing (per ADR-0003) from the start of Phase 3. `admin.rippedorstamped.com` is added to Vercel as an alias domain, a CNAME record is added in Namecheap DNS, and `src/proxy.ts` reads the `host` request header to identify the admin surface. The `/admin/*` route group houses admin pages as before; the subdomain is the entry point.
+
+*Local dev:* add `admin.localhost` → `127.0.0.1` to `/etc/hosts` and set `ADMIN_HOSTNAME=admin.localhost` in `.env.local`. The proxy reads `ADMIN_HOSTNAME` (falling back to `admin.rippedorstamped.com`) so local and production share the same detection logic.
+
+**Consequences.**
+- (+) ADR-0003 is fulfilled as specified from day one — no technical debt from the path-based deviation.
+- (+) Clean URL semantics from the first admin login; no future one-line migration needed.
+- (−) Requires a one-time `/etc/hosts` entry for local development.
+- (−) Vercel domain configuration and DNS propagation are prerequisites before the admin surface is testable in production.
+
+**Alternatives considered.**
+- **Keep path-based routing and flip to subdomain later** (ADR-0027) — rejected because the prerequisite was already met before Phase 3 began.
 
 ---
 

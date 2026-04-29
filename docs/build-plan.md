@@ -687,42 +687,27 @@ Stand up the admin surface at `admin.<domain>`, bootstrap Dean as the super-admi
 
 ### 5.5 Tasks
 
-#### Task 3.1 — Decide routing: path-based `/admin/*` first, subdomain later
+#### Task 3.1 — Configure subdomain routing for the admin surface
 
-**Decision (pre-made — do not re-open):** The user does not yet have a custom domain. Vercel's `.vercel.app` domains do not support arbitrary subdomains. Therefore:
+**Decision (ADR-0028):** `rippedorstamped.com` was live before Phase 3 began. ADR-0027 is superseded. Implement subdomain routing directly per ADR-0003.
 
-1. **Now:** use path-based routing (`/admin/*`) with a server-side layout gate (`requireStaff()`).
-2. **Later (when domain is purchased):** add a proxy-level host check to redirect `admin.<domain>` to the `/admin` route group. This is a one-line proxy change + DNS config.
+**Steps:**
 
-**Write ADR-0027** documenting this temporary deviation:
+1. **Vercel** — Settings → Domains → add `admin.rippedorstamped.com` as an alias on the project.
+2. **Namecheap DNS** — add a CNAME record: `admin` → Vercel's CNAME target (same target used by the apex domain).
+3. **`.env.local`** — add `ADMIN_HOSTNAME=admin.localhost`.
+4. **`.env.example`** — add `ADMIN_HOSTNAME=admin.rippedorstamped.com`.
+5. **`src/env.ts`** — add `ADMIN_HOSTNAME: z.string()` to the server schema.
+6. **`/etc/hosts`** — add `127.0.0.1 admin.localhost` for local dev (one-time, manual step for Dean).
+7. **`src/proxy.ts`** — read the `host` header and detect the admin surface:
+   ```typescript
+   const host = request.headers.get('host') ?? '';
+   const adminHostname = process.env.ADMIN_HOSTNAME ?? 'admin.rippedorstamped.com';
+   const isAdminSurface = host === adminHostname || host.startsWith('admin.');
+   ```
+   When `isAdminSurface` is true and the user is not staff, redirect to `/sign-in`. When false, apply existing public-site auth logic.
 
-```markdown
-## ADR-0027 — Admin routing via /admin/* paths (subdomain deferred)
-
-- **Date:** <today>
-- **Status:** accepted
-
-**Context.** ADR-0003 specifies subdomain-based admin routing (`admin.<domain>`).
-The project does not yet have a custom domain; Vercel's `.vercel.app` domains do
-not support arbitrary subdomains.
-
-**Decision.** Use path-based routing (`/admin/*`) with a server-side layout gate
-(`requireStaff()`) for now. When a custom domain is purchased, add a proxy-level
-host check to redirect `admin.<domain>` to the `/admin` route group. This ADR
-will be superseded at that time.
-
-**Consequences.**
-- (+) Unblocks Phase 3 without waiting on DNS.
-- (+) The route group structure (`src/app/admin/`) is identical either way.
-- (−) The clean URL separation of ADR-0003 is deferred.
-
-**Alternatives considered.**
-- **Wait for domain** — blocks progress on the entire admin surface.
-```
-
-**Files to modify:** `src/proxy.ts` — add `/admin(.*)` to the authenticated-only routes (already covered by the default `auth.protect()` gate — verify).
-
-**Acceptance:** `/admin` requires authentication. No subdomain configuration needed.
+**Acceptance:** visiting `admin.localhost:3000` locally requires authentication and serves the admin route group. The public site at `localhost:3000` is unaffected.
 
 #### Task 3.2 — Add `SUPER_ADMIN_EMAIL` env var
 
@@ -752,7 +737,7 @@ will be superseded at that time.
 After the existing `db.insert(users).values(...)` in the `user.created` branch, add the bootstrap check:
 
 ```typescript
-// Super-admin bootstrap (runs once ever — see ADR-0028)
+// Super-admin bootstrap (runs once ever — see ADR-0029)
 if (primaryEmail.email_address === env.SUPER_ADMIN_EMAIL) {
   const [existingSuperAdmin] = await db
     .select({ count: count() })
@@ -784,10 +769,10 @@ if (primaryEmail.email_address === env.SUPER_ADMIN_EMAIL) {
 
 Add imports: `import { count } from "drizzle-orm";` and `import { auditEvents } from "@/db/schema";`
 
-**Write ADR-0028** (super-admin bootstrap via env var):
+**Write ADR-0029** (super-admin bootstrap via env var):
 
 ```markdown
-## ADR-0028 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var
+## ADR-0029 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var
 
 - **Date:** <today>
 - **Status:** accepted
@@ -1048,7 +1033,7 @@ if (metadata?.staffRole && metadata?.invitedByUserId) {
 }
 ```
 
-**Write ADR-0029** (staff invitations via Clerk API with metadata).
+**Write ADR-0030** (staff invitations via Clerk API with metadata).
 
 **Acceptance:**
 1. Dean (super-admin) visits `/admin/invites/new`, enters an email and selects "admin" → Clerk sends an invite email.
@@ -1074,9 +1059,9 @@ Refer to §1.9 (the mandatory test registry) for the exact test code and specifi
 
 ### 5.6 ADRs to write
 
-- **ADR-0027 — Admin routing via /admin/* paths (subdomain deferred).** Path-based routing now; subdomain when domain is purchased.
-- **ADR-0028 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var.** Fixed at system init; intentional single-use mechanism.
-- **ADR-0029 — Staff invitations use Clerk's invitation API with metadata.** Document why (no parallel invitation system; staff fields captured during normal onboarding with a staff section).
+- **ADR-0028 — Subdomain routing implemented from the start (supersedes ADR-0027).** Domain was live before Phase 3 began; no reason to defer.
+- **ADR-0029 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var.** Fixed at system init; intentional single-use mechanism.
+- **ADR-0030 — Staff invitations use Clerk's invitation API with metadata.** Document why (no parallel invitation system; staff fields captured during normal onboarding with a staff section).
 
 ### 5.7 Definition of done for Phase 3
 
@@ -1094,7 +1079,7 @@ Refer to §1.9 (the mandatory test registry) for the exact test code and specifi
 - [ ] `audit_events` has rows for every role transition and invitation.
 - [ ] Unit tests passing for `isProfileComplete` and auth helpers.
 - [ ] **All 18 Phase 3 tests passing.**
-- [ ] ADRs 0026, 0027, 0028 written.
+- [ ] ADRs 0028, 0029, 0030 written.
 
 ---
 
@@ -1347,7 +1332,7 @@ export async function getProposalsCollection() {
 }
 ```
 
-**Write ADR-0030** — Mongo proposal schema shape. Document the decision to use Mongo for proposals (document-shaped, no referential integrity needed until publication, at which point the data migrates to Postgres as a `paper` or `challenge` row).
+**Write ADR-0031** — Mongo proposal schema shape. Document the decision to use Mongo for proposals (document-shaped, no referential integrity needed until publication, at which point the data migrates to Postgres as a `paper` or `challenge` row).
 
 **Acceptance:** MongoDB client connects; proposal schema validates correctly.
 
@@ -1660,10 +1645,10 @@ This is a critical path — TDD is mandatory per working agreement §1.2.
 
 ### 6.5 ADRs to write
 
-- **ADR-0030 — Mongo proposal schema.** Document the schema shape, why Mongo (document-shaped, no FK needed until publication), and the publication flow (Mongo draft → Postgres paper/challenge row).
-- **ADR-0030 — Episode state machine enforced in application code.** The `episodes.status` enum constrains valid states; the application code enforces valid transitions. No DB-level trigger. Reason: simpler to test and debug.
-- **ADR-0031 — Rate limiting via unique constraint on point_awards.** `ON CONFLICT DO NOTHING` handles duplicates; no Redis/Upstash needed for v1's small action catalog.
-- **ADR-0032 — One vote per poll enforced at application level.** The DB has a unique constraint per (user, poll_option), but the "one vote per poll across all options" check is done in application code because `votes` doesn't have a direct `poll_id` column. Document why this is acceptable (the join check is fast and well-tested).
+- **ADR-0031 — Mongo proposal schema.** Document the schema shape, why Mongo (document-shaped, no FK needed until publication), and the publication flow (Mongo draft → Postgres paper/challenge row).
+- **ADR-0032 — Episode state machine enforced in application code.** The `episodes.status` enum constrains valid states; the application code enforces valid transitions. No DB-level trigger. Reason: simpler to test and debug.
+- **ADR-0033 — Rate limiting via unique constraint on point_awards.** `ON CONFLICT DO NOTHING` handles duplicates; no Redis/Upstash needed for v1's small action catalog.
+- **ADR-0034 — One vote per poll enforced at application level.** The DB has a unique constraint per (user, poll_option), but the "one vote per poll across all options" check is done in application code because `votes` doesn't have a direct `poll_id` column. Document why this is acceptable (the join check is fast and well-tested).
 
 ### 6.6 Definition of done for Phase 4
 

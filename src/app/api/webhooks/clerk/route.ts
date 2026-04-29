@@ -4,10 +4,10 @@ import type {
   WebhookEvent,
   WebhookEventType,
 } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { users, auditEvents } from "@/db/schema";
 import { env } from "@/env";
 
 export async function POST(req: NextRequest) {
@@ -36,6 +36,58 @@ export async function POST(req: NextRequest) {
         email: primaryEmail.email_address,
         // display_name, country_code, city_name, timezone are null until onboarding
       });
+
+      // ── Super-admin bootstrap (runs once ever — see ADR-0029) ──────────────
+      if (primaryEmail.email_address === env.SUPER_ADMIN_EMAIL) {
+        const [{ count: superAdminCount }] = await db
+          .select({ count: count() })
+          .from(users)
+          .where(eq(users.staffRole, "super_admin"));
+
+        if (superAdminCount === 0) {
+          await db
+            .update(users)
+            .set({ staffRole: "super_admin" })
+            .where(eq(users.clerkUserId, data.id));
+
+          const [newUser] = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.clerkUserId, data.id));
+
+          if (newUser) {
+            await db.insert(auditEvents).values({
+              eventType: "staff.super_admin_bootstrapped",
+              targetUserId: newUser.id,
+              payload: { email: primaryEmail.email_address },
+            });
+          }
+        }
+      }
+
+      // ── Staff invitation metadata ──────────────────────────────────────────
+      const metadata = data.public_metadata as {
+        staffRole?: string;
+        invitedByUserId?: string;
+      } | undefined;
+
+      if (metadata?.staffRole && metadata?.invitedByUserId) {
+        const [inviter] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, metadata.invitedByUserId));
+
+        if (inviter) {
+          await db
+            .update(users)
+            .set({
+              staffRole: metadata.staffRole as "content_creator" | "admin",
+              invitedByUserId: inviter.id,
+              invitedAt: new Date(),
+            })
+            .where(eq(users.clerkUserId, data.id));
+        }
+      }
     } else {
       await db
         .update(users)

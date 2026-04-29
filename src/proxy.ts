@@ -27,17 +27,36 @@ const isOnboardingExempt = createRouteMatcher([
   "/api/webhooks/(.*)",
 ]);
 
+// Detect whether the request is for the admin surface (ADR-0028).
+// Reads ADMIN_HOSTNAME at request time (not module load) so the value is
+// always fresh and testable without restarting the server.
+function isAdminRequest(req: Request): boolean {
+  const host = req.headers.get("host") ?? "";
+  const adminHostname = process.env.ADMIN_HOSTNAME ?? "admin.rippedorstamped.com";
+  return host === adminHostname || host.startsWith("admin.");
+}
+
 export default clerkMiddleware(async (auth, req) => {
   const { userId } = await auth();
 
-  // ── Auth gate ─────────────────────────────────────────────────────────────
-  // Unauthenticated users get public routes only. Everything else → /sign-in.
+  // ── Admin surface gate ────────────────────────────────────────────────────
+  // Admin requests from unauthenticated users go straight to /sign-in.
+  // Staff role check is enforced per-layout/per-action inside /admin — the
+  // proxy only handles the unauthenticated case here.
+  if (isAdminRequest(req)) {
+    if (!userId) {
+      return NextResponse.redirect(new URL("/sign-in", req.url));
+    }
+    return;
+  }
+
+  // ── Auth gate (public site) ───────────────────────────────────────────────
   if (!userId) {
     if (isPublicRoute(req)) return;
     return NextResponse.redirect(new URL("/sign-in", req.url));
   }
 
-  // ── Onboarding gate ──────────────────────────────────────────────────────
+  // ── Onboarding gate ───────────────────────────────────────────────────────
   // Authenticated users who haven't finished onboarding get redirected to
   // /onboarding on every route except the exempt ones. The cookie value must
   // match the current userId — see src/lib/onboarded-cookie.ts for why.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 
 const isE2ETestMode =
@@ -39,7 +39,6 @@ export function CityAutocomplete({
 }: CityAutocompleteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
-  const [inputValue, setInputValue] = useState(defaultValue ?? "");
 
   const handlePlaceSelect = useCallback(() => {
     const place = autocompleteRef.current?.getPlace();
@@ -67,8 +66,11 @@ export function CityAutocomplete({
       cityName = place.name;
     }
 
-    const displayParts = [cityName, cityState].filter(Boolean);
-    setInputValue(displayParts.join(", "));
+    // Update the DOM value directly — Google Places already owns the input DOM,
+    // so we match that pattern rather than fighting it with React state.
+    if (inputRef.current) {
+      inputRef.current.value = [cityName, cityState].filter(Boolean).join(", ");
+    }
 
     onSelect({
       cityName,
@@ -118,12 +120,12 @@ export function CityAutocomplete({
 
   const handleTestModeSelect = useCallback(() => {
     onSelect({
-      cityName: inputValue,
+      cityName: inputRef.current?.value ?? "",
       cityState: null,
       countryCode,
       googlePlaceId: "test-place-id",
     });
-  }, [inputValue, countryCode, onSelect]);
+  }, [countryCode, onSelect]);
 
   return (
     <div>
@@ -138,8 +140,7 @@ export function CityAutocomplete({
           ref={inputRef}
           id="city-autocomplete"
           type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
+          defaultValue={defaultValue ?? ""}
           placeholder="Start typing your city..."
           autoComplete="off"
           className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"

@@ -641,6 +641,26 @@ Clerk's official guidance is to use `@clerk/testing` for Playwright tests rather
 
 ---
 
+## ADR-0027 — Admin routing via /admin/* paths (subdomain deferred)
+
+- **Date:** 2026-04-29
+- **Status:** accepted
+
+**Context.** ADR-0003 specifies subdomain-based admin routing (`admin.<domain>`). The project does not yet have a custom domain; Vercel's `.vercel.app` domains do not support arbitrary subdomains.
+
+**Decision.** Use path-based routing (`/admin/*`) with a server-side layout gate (`requireStaff()`) for now. When a custom domain is purchased, add a proxy-level host check to redirect `admin.<domain>` to the `/admin` route group. This ADR will be superseded at that time.
+
+**Consequences.**
+- (+) Unblocks Phase 3 without waiting on DNS.
+- (+) The route group structure (`src/app/admin/`) is identical either way — the subdomain migration is a one-line proxy change.
+- (−) The clean URL separation of ADR-0003 is deferred.
+
+**Alternatives considered.**
+- **Wait for domain** — blocks progress on the entire admin surface indefinitely.
+- **Vercel rewrites** — no way to create a true subdomain on `.vercel.app`; rewrites don't help.
+
+---
+
 ## Template for new ADRs
 
 

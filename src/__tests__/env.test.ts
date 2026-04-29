@@ -13,6 +13,7 @@ const serverSchema = z.object({
   MONGODB_URI: z.string().url(),
   CLERK_SECRET_KEY: z.string().min(1),
   CLERK_WEBHOOK_SECRET: z.string().min(1),
+  SUPER_ADMIN_EMAIL: z.string().email(),
 });
 
 const clientSchema = z.object({
@@ -40,6 +41,7 @@ const validServer = {
   MONGODB_URI: "mongodb+srv://user:pass@cluster.mongodb.net/ripped",
   CLERK_SECRET_KEY: "sk_test_abc",
   CLERK_WEBHOOK_SECRET: "whsec_abc",
+  SUPER_ADMIN_EMAIL: "dean@test.com",
 };
 
 const validClient = {
@@ -72,6 +74,24 @@ describe("server env schema", () => {
     const result = serverSchema.safeParse({
       ...validServer,
       NODE_ENV: "staging",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a missing SUPER_ADMIN_EMAIL", () => {
+    const result = serverSchema.safeParse({
+      ...validServer,
+      SUPER_ADMIN_EMAIL: undefined,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-email SUPER_ADMIN_EMAIL", () => {
+    // A plain string would be accepted by z.string() — the email() refinement
+    // prevents a misconfigured value from silently skipping the bootstrap check.
+    const result = serverSchema.safeParse({
+      ...validServer,
+      SUPER_ADMIN_EMAIL: "not-an-email",
     });
     expect(result.success).toBe(false);
   });

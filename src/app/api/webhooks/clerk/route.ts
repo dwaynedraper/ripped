@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       await db.insert(users).values({
         clerkUserId: data.id,
         email: primaryEmail.email_address,
-        // display_name, country_code, city_id, timezone are null until onboarding
+        // display_name, country_code, city_name, timezone are null until onboarding
       });
     } else {
       await db

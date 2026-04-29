@@ -452,7 +452,7 @@ Complete the two-phase sign-up flow (per ADR-0023):
 
 1. User signs up with Clerk (email + password or Google) at `/sign-up`.
 2. Webhook inserts a minimal `users` row (already works from Phase 1).
-3. User is redirected to `/onboarding` → fills in `display_name`, `country_code`, `city_id`, `timezone`.
+3. User is redirected to `/onboarding` → fills in `display_name`, `country_code`, `city_name`, `timezone`.
 4. Server Action persists these and marks the record complete.
 5. Proxy gate: authenticated users with an incomplete profile are redirected to `/onboarding` on every route except `/onboarding` itself, `/sign-out`, and the webhook endpoint.
 
@@ -490,7 +490,7 @@ Complete the two-phase sign-up flow (per ADR-0023):
 | `src/lib/timezones.ts` | Static list of IANA timezones |
 | `src/lib/onboarding.ts` | Helper: `isProfileComplete(user: User): boolean` |
 | `src/__tests__/onboarding/actions.test.ts` | Unit test for the server action's validation |
-| `tests/e2e/sign-up.spec.ts` | Playwright E2E: sign up → onboarding → app |
+| `tests/e2e/onboarding.spec.ts` | Playwright E2E: sign in as test user → fill onboarding → assert home redirect + cookie |
 
 #### Delete
 
@@ -615,7 +615,7 @@ Follow the test pyramid in [`docs/testing-strategy.md`](./testing-strategy.md).
 
 - **Unit** — `src/__tests__/onboarding/actions.test.ts`: Zod schema validation (valid input passes; missing field rejects; invalid country code rejects; display name uniqueness logic).
 - **Unit** — `src/__tests__/lib/onboarding.test.ts`: `isProfileComplete` returns correct boolean for each field combination.
-- **E2E** — `tests/e2e/sign-up.spec.ts`: Playwright test that signs up a fresh user, fills out onboarding, lands on home page. Use a throwaway Clerk test user.
+- **E2E** — `tests/e2e/onboarding.spec.ts`: Playwright test using the `onboardingPage` fixture (dedicated test user, E2E test mode bypass, DB reset before each run). Fills the form, asserts redirect to `/` and `ripped_onboarded` cookie.
 
 ### 4.7 ADRs to write during this phase
 
@@ -694,10 +694,10 @@ Stand up the admin surface at `admin.<domain>`, bootstrap Dean as the super-admi
 1. **Now:** use path-based routing (`/admin/*`) with a server-side layout gate (`requireStaff()`).
 2. **Later (when domain is purchased):** add a proxy-level host check to redirect `admin.<domain>` to the `/admin` route group. This is a one-line proxy change + DNS config.
 
-**Write ADR-0026** documenting this temporary deviation:
+**Write ADR-0027** documenting this temporary deviation:
 
 ```markdown
-## ADR-0026 — Admin routing via /admin/* paths (subdomain deferred)
+## ADR-0027 — Admin routing via /admin/* paths (subdomain deferred)
 
 - **Date:** <today>
 - **Status:** accepted
@@ -752,7 +752,7 @@ will be superseded at that time.
 After the existing `db.insert(users).values(...)` in the `user.created` branch, add the bootstrap check:
 
 ```typescript
-// Super-admin bootstrap (runs once ever — see ADR-0027)
+// Super-admin bootstrap (runs once ever — see ADR-0028)
 if (primaryEmail.email_address === env.SUPER_ADMIN_EMAIL) {
   const [existingSuperAdmin] = await db
     .select({ count: count() })
@@ -784,10 +784,10 @@ if (primaryEmail.email_address === env.SUPER_ADMIN_EMAIL) {
 
 Add imports: `import { count } from "drizzle-orm";` and `import { auditEvents } from "@/db/schema";`
 
-**Write ADR-0027** (super-admin bootstrap via env var):
+**Write ADR-0028** (super-admin bootstrap via env var):
 
 ```markdown
-## ADR-0027 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var
+## ADR-0028 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var
 
 - **Date:** <today>
 - **Status:** accepted
@@ -872,68 +872,9 @@ export async function requireSuperAdmin(): Promise<User> {
   return requireRole("super_admin");
 }
 
-/**
- * Returns true if the user's four onboarding fields are all non-null.
- * Used by the proxy to gate incomplete profiles.
- */
-export function isProfileComplete(user: User): boolean {
-  return (
-    user.displayName !== null &&
-    user.countryCode !== null &&
-    user.cityId !== null &&
-    user.timezone !== null
-  );
-}
 ```
 
-**Test file to create:** `src/__tests__/lib/auth.test.ts`
-
-```typescript
-import { describe, it, expect } from "vitest";
-import { isProfileComplete } from "@/lib/auth";
-
-// Test isProfileComplete with mock User objects
-const completeUser = {
-  displayName: "TestUser",
-  countryCode: "US",
-  cityId: 1,
-  timezone: "America/New_York",
-} as any;
-
-describe("isProfileComplete", () => {
-  it("returns true when all four fields are set", () => {
-    expect(isProfileComplete(completeUser)).toBe(true);
-  });
-
-  it("returns false when displayName is null", () => {
-    expect(isProfileComplete({ ...completeUser, displayName: null })).toBe(false);
-  });
-
-  it("returns false when countryCode is null", () => {
-    expect(isProfileComplete({ ...completeUser, countryCode: null })).toBe(false);
-  });
-
-  it("returns false when cityId is null", () => {
-    expect(isProfileComplete({ ...completeUser, cityId: null })).toBe(false);
-  });
-
-  it("returns false when timezone is null", () => {
-    expect(isProfileComplete({ ...completeUser, timezone: null })).toBe(false);
-  });
-
-  it("returns false when all four are null", () => {
-    expect(
-      isProfileComplete({
-        ...completeUser,
-        displayName: null,
-        countryCode: null,
-        cityId: null,
-        timezone: null,
-      })
-    ).toBe(false);
-  });
-});
-```
+> **Note:** Do NOT add `isProfileComplete` to `src/lib/auth.ts`. It already lives in `src/lib/onboarding.ts` (written in Phase 2, post-ADR-0025) and checks `cityName` (text field), not `cityId` (FK — removed). Its tests already exist and pass in `src/__tests__/lib/onboarding.test.ts`. No separate `auth.test.ts` for profile-completeness is needed.
 
 **Acceptance:** `npm run test:unit` passes with the new tests.
 
@@ -1107,7 +1048,7 @@ if (metadata?.staffRole && metadata?.invitedByUserId) {
 }
 ```
 
-**Write ADR-0028** (staff invitations via Clerk API with metadata).
+**Write ADR-0029** (staff invitations via Clerk API with metadata).
 
 **Acceptance:**
 1. Dean (super-admin) visits `/admin/invites/new`, enters an email and selects "admin" → Clerk sends an invite email.
@@ -1133,9 +1074,9 @@ Refer to §1.9 (the mandatory test registry) for the exact test code and specifi
 
 ### 5.6 ADRs to write
 
-- **ADR-0026 — Admin routing via /admin/* paths (subdomain deferred).** Path-based routing now; subdomain when domain is purchased.
-- **ADR-0027 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var.** Fixed at system init; intentional single-use mechanism.
-- **ADR-0028 — Staff invitations use Clerk's invitation API with metadata.** Document why (no parallel invitation system; staff fields captured during normal onboarding with a staff section).
+- **ADR-0027 — Admin routing via /admin/* paths (subdomain deferred).** Path-based routing now; subdomain when domain is purchased.
+- **ADR-0028 — Super-admin bootstrap via SUPER_ADMIN_EMAIL env var.** Fixed at system init; intentional single-use mechanism.
+- **ADR-0029 — Staff invitations use Clerk's invitation API with metadata.** Document why (no parallel invitation system; staff fields captured during normal onboarding with a staff section).
 
 ### 5.7 Definition of done for Phase 3
 
@@ -1406,7 +1347,7 @@ export async function getProposalsCollection() {
 }
 ```
 
-**Write ADR-0029** — Mongo proposal schema shape. Document the decision to use Mongo for proposals (document-shaped, no referential integrity needed until publication, at which point the data migrates to Postgres as a `paper` or `challenge` row).
+**Write ADR-0030** — Mongo proposal schema shape. Document the decision to use Mongo for proposals (document-shaped, no referential integrity needed until publication, at which point the data migrates to Postgres as a `paper` or `challenge` row).
 
 **Acceptance:** MongoDB client connects; proposal schema validates correctly.
 
@@ -1719,7 +1660,7 @@ This is a critical path — TDD is mandatory per working agreement §1.2.
 
 ### 6.5 ADRs to write
 
-- **ADR-0029 — Mongo proposal schema.** Document the schema shape, why Mongo (document-shaped, no FK needed until publication), and the publication flow (Mongo draft → Postgres paper/challenge row).
+- **ADR-0030 — Mongo proposal schema.** Document the schema shape, why Mongo (document-shaped, no FK needed until publication), and the publication flow (Mongo draft → Postgres paper/challenge row).
 - **ADR-0030 — Episode state machine enforced in application code.** The `episodes.status` enum constrains valid states; the application code enforces valid transitions. No DB-level trigger. Reason: simpler to test and debug.
 - **ADR-0031 — Rate limiting via unique constraint on point_awards.** `ON CONFLICT DO NOTHING` handles duplicates; no Redis/Upstash needed for v1's small action catalog.
 - **ADR-0032 — One vote per poll enforced at application level.** The DB has a unique constraint per (user, poll_option), but the "one vote per poll across all options" check is done in application code because `votes` doesn't have a direct `poll_id` column. Document why this is acceptable (the join check is fast and well-tested).

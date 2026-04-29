@@ -35,6 +35,10 @@ const schema = z.object({
       message: "Must use http or https protocol",
     }),
 
+  // Admin bootstrap (see ADR-0028)
+  // The email address that is auto-promoted to super_admin on first sign-up.
+  SUPER_ADMIN_EMAIL: z.string().email(),
+
   // Google Maps (Places Autocomplete — see ADR-0025)
   // Read from Client Components via process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.
   // Validated here so a missing key fails the build, not the user's first city search.

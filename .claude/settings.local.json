@@ -5,7 +5,9 @@
       "Bash(npx husky *)",
       "Bash(npm run *)",
       "Bash(npm audit *)",
-      "Bash(npm show *)"
+      "Bash(npm show *)",
+      "Bash(node -e \"const m = require\\('/Users/deandraper/projects/ripped/node_modules/@clerk/testing/dist/playwright/index.js'\\); console.log\\(Object.keys\\(m\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(node -e ' *)"
     ]
   }
 }

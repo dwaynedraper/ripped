@@ -9,8 +9,16 @@ import type { NextRequest } from "next/server";
 import { db } from "@/db";
 import { users, auditEvents } from "@/db/schema";
 import { env } from "@/env";
+import { webhookRatelimit } from "@/lib/ratelimit";
 
 export async function POST(req: NextRequest) {
+  if (webhookRatelimit) {
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+    const { success } = await webhookRatelimit.limit(ip);
+    if (!success) return new Response("Too Many Requests", { status: 429 });
+  }
+
   let evt: WebhookEvent;
 
   try {

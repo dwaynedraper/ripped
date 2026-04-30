@@ -48,6 +48,24 @@ const schema = z.object({
   // Validated here so a missing key fails the build, not the user's first city search.
   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: z.string().min(1),
 
+  // Sentry — optional; app works without error monitoring but errors won't be tracked.
+  // An empty string (KEY=) is treated as "not set" so .env.local placeholders don't fail.
+  NEXT_PUBLIC_SENTRY_DSN: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().url().optional(),
+  ),
+
+  // Upstash Redis — optional; app works without rate limiting but loses defense-in-depth
+  // on the webhook endpoint and vote endpoint. Set both vars or neither.
+  UPSTASH_REDIS_REST_URL: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().url().optional(),
+  ),
+  UPSTASH_REDIS_REST_TOKEN: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().min(1).optional(),
+  ),
+
   // E2E test bypass for <CityAutocomplete /> — see ADR-0026.
   // "1" disables the Google Places loader so Playwright tests can drive the
   // form without a network round-trip. Defaults to "0" (off) so a forgotten

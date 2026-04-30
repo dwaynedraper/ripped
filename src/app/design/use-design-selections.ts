@@ -25,6 +25,7 @@ export function useDesignSelections() {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<DesignSelections>;
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setSelections({ ...defaultSelections, ...parsed });
       }
     } catch {

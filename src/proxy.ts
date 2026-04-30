@@ -15,6 +15,7 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/webhooks/(.*)",
+  "/design(.*)",
 ]);
 
 // Routes that an *authenticated but not yet onboarded* user can visit without
@@ -25,6 +26,7 @@ const isOnboardingExempt = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/webhooks/(.*)",
+  "/design(.*)",
 ]);
 
 // Detect whether the request is for the admin surface (ADR-0028).
